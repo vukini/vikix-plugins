@@ -6,6 +6,9 @@
 ;;;; selected quoted in it. Each note lands in ~/Dropbox/notes/inbox.org as
 ;;;; a heading, with when and the window it came from. The box is an Emacs
 ;;;; frame titled "Note to inbox", floated here, in the middle of the screen.
+;;;; Super+Alt+Shift+s sorts the inbox (inbox sort, in a terminal): a model
+;;;; suggests where each note goes, you change what you like, then they
+;;;; move, and to-dos go to Todoist when you say so.
 
 (in-package :stumpwm)
 
@@ -40,6 +43,11 @@
   "A note into your Org inbox, with what you've selected quoted."
   (run-shell-command "inbox quote"))
 
+(defcommand inbox-sort () ()
+  "File the inbox's notes where they belong: a model suggests, you choose (in a terminal)."
+  ;; Vikix's terminal (*vikix-terminal*, Super+Return's), not $TERMINAL.
+  (run-shell-command (format nil "VIKIX_TERMINAL='~a' inbox sort --term" *vikix-terminal*)))
+
 (defcommand inbox-open () ()
   "Your Org inbox, in Emacs."
   (run-shell-command "inbox open"))
@@ -47,4 +55,6 @@
 (vikix-plugin-key "s-M-i" "inbox-note" "Notes: a note into your inbox (Super+F9 in it to speak)" "Notes")
 (vikix-plugin-key "s-M-I" "inbox-quote" "Notes: a note into your inbox, quoting the selection" "Notes")
 (vikix-plugin-menu "Notes: a note into your inbox" '(inbox-note))
+(vikix-plugin-key "s-M-S" "inbox-sort" "Notes: sort the inbox into your Org files, to-dos to Todoist" "Notes")
+(vikix-plugin-menu "Notes: sort the inbox" '(inbox-sort))
 (vikix-plugin-menu "Notes: open the inbox" '(inbox-open))

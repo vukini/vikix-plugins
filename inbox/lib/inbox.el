@@ -96,7 +96,10 @@ offers rofi's), and the inbox's buffer is as it was."
       (org-entry-put (point) "CREATED" (alist-get 'created vikix-inbox--info))
       (let ((src (alist-get 'source vikix-inbox--info)))
         (when (and src (not (string-empty-p src)))
-          (org-entry-put (point) "SOURCE" src))))))
+          (org-entry-put (point) "SOURCE" src)))
+      (let ((url (alist-get 'url vikix-inbox--info)))
+        (when (and url (not (string-empty-p url)))
+          (org-entry-put (point) "URL" url))))))
 
 (defun vikix-inbox--restore ()
   "The inbox's buffer as it was before the note: closed, or read-only again."

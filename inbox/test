@@ -42,13 +42,14 @@ ok test -z "$(ls "$t/run")"           # the box's file doesn't stay behind
 # The Emacs box, in a batch Emacs.
 if command -v emacs >/dev/null; then
   box() {   # box TEXT FINISH [ELISP]: what bin/inbox hands Emacs, then typing and C-c C-c or C-c C-k
-    printf '{"file": "%s", "source": "Board review (Teams)", "quote": "#+ a line\\nsecond", "created": "[2026-10-02 Fri 21:00]"}' "$inbox" > "$t/run/ask.json"
+    printf '{"file": "%s", "source": "Board review (Teams)", "url": "https://example.org/board", "quote": "#+ a line\\nsecond", "created": "[2026-10-02 Fri 21:00]"}' "$inbox" > "$t/run/ask.json"
     emacs --batch -Q -l "$here/lib/inbox.el" --eval "(progn ${3:-} (vikix-inbox-capture \"$t/run/ask.json\") (insert \"$1\") ($2))" 2>/dev/null
   }
   box 'Follow up with Lee\nabout the budget' org-capture-finalize
   ok grep -qx '\* Follow up with Lee' "$inbox"
   ok grep -q -A4 'Follow up with Lee' "$inbox"
   ok grep -qx ':SOURCE:   Board review (Teams)' "$inbox"
+  ok grep -qx ':URL:      https://example.org/board' "$inbox"
   ok grep -qx ',#+ a line' "$inbox"
   ok grep -qx 'about the budget' "$inbox"
   ok test ! -e "$t/run/ask.json"
@@ -65,5 +66,11 @@ if command -v emacs >/dev/null; then
   ok grep -qx '\* Note' "$inbox"
 fi
 
-[ "$fail" = 0 ] && echo "inbox: add, the rofi box, the Emacs box (kept, dropped, untitled)"
+# A page's address; the sort, its undo, and Todoist (test-sort.py).
+"$here/bin/inbox" add --url https://docs.voidlinux.org/ "Read about runit" >/dev/null
+ok grep -qx ':URL:      https://docs.voidlinux.org/' "$inbox"
+rm -rf "$t/notes"
+python3 "$here/test-sort.py" || fail=1
+
+[ "$fail" = 0 ] && echo "inbox: add, the rofi box, the Emacs box (kept, dropped, untitled), the page's address, sort, undo, Todoist"
 exit "$fail"

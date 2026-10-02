@@ -7,13 +7,18 @@
   inbox quote          the same, with what you've selected quoted in it
                        (Super+Alt+Shift+i)
   inbox add TEXT...    a note straight from a terminal or a script (TEXT, or
-                       stdin when there's none); --source SAYS where it came from
+                       stdin when there's none); --source SAYS where it came
+                       from, --url ADDRESS the page
+  inbox sort           file the inbox's notes where they belong, a model
+                       suggesting, you choosing, and to-dos to Todoist
+                       (Super+Alt+Shift+s, or the menu: in a terminal)
+  inbox sort --undo    put back the files as they were before the last sort
   inbox open           the inbox in Emacs
   inbox file           where the inbox is
 
 Each note is an Org heading: the first line is its title, the rest its
 body, with when it was written and where from (the window you were in) as
-properties. The box is an Emacs frame through org-capture when Emacs's
+properties, and for a page in Firefox or Nyxt its address. The box is an Emacs frame through org-capture when Emacs's
 server runs (Vikix starts it); without it, a one-line rofi box.
 Settings: ~/.config/vikix/plugins/inbox/settings (file =).
 """
@@ -24,6 +29,9 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import pageaddress  # noqa: E402
 
 HOME = os.path.expanduser("~")
 CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
@@ -56,14 +64,16 @@ def run(argv):
 
 def source():
     """Where the note comes from: the window you were in, by its title and
-    its program (WM_CLASS's second word)."""
+    its program (WM_CLASS's second word), and for a browser the page's
+    address when it can be found (lib/pageaddress.py)."""
     win = run(["xdotool", "getactivewindow"])
     if not win:
-        return ""
+        return "", ""
     title = run(["xdotool", "getwindowname", win])
     cls = run(["xprop", "-id", win, "WM_CLASS"]).rsplit('"', 2)
     program = cls[-2] if len(cls) >= 3 else ""
-    return f"{title} ({program})" if title and program and program.lower() not in title.lower() else title or program
+    src = f"{title} ({program})" if title and program and program.lower() not in title.lower() else title or program
+    return src, pageaddress.address(program, title)
 
 
 def stamp(t=None):
@@ -71,13 +81,15 @@ def stamp(t=None):
     return time.strftime(f"[%Y-%m-%d {DAYS[t.tm_wday]} %H:%M]", t)
 
 
-def entry(text, src="", quote=""):
+def entry(text, src="", quote="", url=""):
     """An Org heading: the first line the title, the rest the body."""
     lines = text.strip("\n").splitlines() or [""]
     title = lines[0].strip() or "Note"
     props = [":PROPERTIES:", f":CREATED:  {stamp()}"]
     if src:
         props.append(f":SOURCE:   {' '.join(src.split())}")
+    if url:
+        props.append(f":URL:      {url}")
     props.append(":END:")
     # A body line starting with * would be a heading of its own: Org's escape.
     body = [("," + l if l.lstrip(",").startswith("*") else l) for l in lines[1:]]
@@ -88,7 +100,7 @@ def entry(text, src="", quote=""):
     return "\n".join(out) + "\n"
 
 
-def append(text, src="", quote=""):
+def append(text, src="", quote="", url=""):
     path = inbox_file()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     new = not os.path.exists(path) or os.path.getsize(path) == 0
@@ -100,7 +112,7 @@ def append(text, src="", quote=""):
                 r.seek(-1, os.SEEK_END)
                 if r.read(1) != b"\n":
                     f.write("\n")
-        f.write(entry(text, src, quote))
+        f.write(entry(text, src, quote, url))
     return path
 
 
@@ -108,13 +120,13 @@ def notify(text):
     run(["notify-send", "-a", "inbox", "-t", "3000", text])
 
 
-def emacs_box(src, quote):
+def emacs_box(src, quote, url):
     """The box in Emacs, through org-capture; False when Emacs's server isn't there."""
     if not shutil.which("emacsclient"):
         return False
     fd, ask = tempfile.mkstemp(prefix="inbox-", suffix=".json", dir=os.environ.get("XDG_RUNTIME_DIR"))
     with os.fdopen(fd, "w") as f:
-        json.dump({"file": inbox_file(), "source": src, "quote": quote, "created": stamp()}, f)
+        json.dump({"file": inbox_file(), "source": src, "url": url, "quote": quote, "created": stamp()}, f)
     el = os.path.realpath(EL)
     form = f'(progn (load {json.dumps(el)} nil t) (vikix-inbox-capture {json.dumps(ask)}))'
     try:
@@ -131,7 +143,7 @@ def emacs_box(src, quote):
     return True
 
 
-def rofi_box(src, quote):
+def rofi_box(src, quote, url):
     try:
         text = subprocess.run(["rofi", "-dmenu", "-p", "note", "-l", "0",
                                "-mesg", (f"Into the inbox · from {src}" if src else "Into the inbox")],
@@ -139,15 +151,15 @@ def rofi_box(src, quote):
     except OSError:
         return
     if text:
-        append(text, src, quote)
+        append(text, src, quote, url)
         notify("Noted in the inbox")
 
 
 def box(with_quote):
-    src = source()
+    src, url = source()
     quote = run(["xclip", "-o", "-selection", "primary"]) if with_quote else ""
-    if not emacs_box(src, quote):
-        rofi_box(src, quote)
+    if not emacs_box(src, quote, url):
+        rofi_box(src, quote, url)
 
 
 def main(argv):
@@ -157,13 +169,27 @@ def main(argv):
     elif cmd == "quote":
         box(True)
     elif cmd == "add":
-        args, src = argv[1:], ""
-        if args[:1] == ["--source"] and len(args) >= 2:
-            src, args = args[1], args[2:]
+        args, src, url = argv[1:], "", ""
+        while args[:1] in (["--source"], ["--url"]) and len(args) >= 2:
+            if args[0] == "--source":
+                src = args[1]
+            else:
+                url = args[1]
+            args = args[2:]
         text = " ".join(args) if args else sys.stdin.read()
         if not text.strip():
             sys.exit("inbox add: nothing to note")
-        print(append(text, src))
+        print(append(text, src, "", url))
+    elif cmd == "sort" and argv[1:] == ["--term"]:
+        # From the key or the menu: in Vikix's terminal (StumpWM passes
+        # VIKIX_TERMINAL), which stays open to read what it did.
+        term = (os.environ.get("VIKIX_TERMINAL") or "alacritty").split()
+        script = f'"{sys.executable}" "{os.path.realpath(__file__)}" sort; echo; echo "(Enter closes this)"; read _'
+        argv2 = term + ([] if os.path.basename(term[0]) == "kitty" else ["-e"]) + ["sh", "-c", script]
+        subprocess.Popen(["setsid", "-f", *argv2], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif cmd == "sort":
+        os.execvp(sys.executable, [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                                "..", "lib", "sort.py"), *argv[1:]])
     elif cmd == "open":
         path = inbox_file()
         if not os.path.exists(path):
