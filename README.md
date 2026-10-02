@@ -21,6 +21,7 @@ Vikix uses this repository at a pinned commit, one it has checked: an update can
 | [next-meeting](next-meeting/) | Your next meeting in the bar (`Standup 14:30 in 12m`, `now: Standup`), from your calendars' private links (Microsoft 365, Google, Todoist), a notification 5 minutes before; Super+Alt+j joins it (Teams in the Teams web app), Super+Alt+c lists the week; each meeting joined is a record |
 | [flights](flights/) | Search flights from a line (`DXB LHR 12 Nov, back 20th`): cheapest first, the quickest marked, Enter opens the search on Google Flights to book there; watch a route and get a notification (and `flight cheaper` in the bar) when it drops; Super+Alt+f. Prices from Google Flights through fast-flights (no account; unofficial); each search and each price checked is a record; it never books |
 | [repos](repos/) | Which git projects in `~/src` (and `~/.emacs.d`, `~/.dotfiles`) need pushing, pulling or committing: `git 2` in the bar; Super+Alt+g opens a terminal with the details and the commands that do it, a shell ready, the commands one Up away. Asks GitHub every 30 minutes over HTTPS (gh's login), never needing your key's passphrase; never pushes or pulls by itself |
+| [inbox](inbox/) | Notes from anywhere: Super+Alt+i opens a small box over what you're doing (write, or Super+F9 to speak), Super+Alt+Shift+i quotes the selection; each note lands in your Org inbox, `~/Dropbox/notes/inbox.org` (the phones see it through Dropbox), with when and the window it came from. `inbox add TEXT` from a terminal |
 
 ## What a plugin is
 

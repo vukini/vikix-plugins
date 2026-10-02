@@ -1,0 +1,4 @@
+# Settings for the inbox plugin (yours; Vikix never overwrites this file).
+# The Org file notes land in. In Dropbox, your phones see it too (Orgzly,
+# beorg); the folder is made when the first note comes.
+file = ~/Dropbox/notes/inbox.org

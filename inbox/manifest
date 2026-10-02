@@ -1,0 +1,5 @@
+name: inbox
+about: Notes from anywhere: Super+Alt+i opens a small box over what you're doing (type, or Super+F9 to speak), Super+Alt+Shift+i quotes the selection; each note lands in your Org inbox (~/Dropbox/notes/inbox.org) with the window it came from
+kinds: key menu
+vikix: 0.71.44
+lisp: plugin.lisp

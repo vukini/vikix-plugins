@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""inbox — notes from anywhere, into your Org inbox.
+
+  inbox note           a small box over what you're doing (Super+Alt+i):
+                       write, or press Super+F9 and speak; C-c C-c keeps it,
+                       C-c C-k drops it
+  inbox quote          the same, with what you've selected quoted in it
+                       (Super+Alt+Shift+i)
+  inbox add TEXT...    a note straight from a terminal or a script (TEXT, or
+                       stdin when there's none); --source SAYS where it came from
+  inbox open           the inbox in Emacs
+  inbox file           where the inbox is
+
+Each note is an Org heading: the first line is its title, the rest its
+body, with when it was written and where from (the window you were in) as
+properties. The box is an Emacs frame through org-capture when Emacs's
+server runs (Vikix starts it); without it, a one-line rofi box.
+Settings: ~/.config/vikix/plugins/inbox/settings (file =).
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+HOME = os.path.expanduser("~")
+CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+SETTINGS = os.path.join(CONFIG, "vikix", "plugins", "inbox", "settings")
+EL = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "inbox.el")
+FRAME = "Note to inbox"   # the frame's title: plugin.lisp floats the window by it
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def inbox_file():
+    path = "~/Dropbox/notes/inbox.org"
+    try:
+        with open(SETTINGS) as f:
+            for line in f:
+                if "=" in line and not line.lstrip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    if k.strip() == "file" and v.strip():
+                        path = v.strip()
+    except FileNotFoundError:
+        pass
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def run(argv):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def source():
+    """Where the note comes from: the window you were in, by its title and
+    its program (WM_CLASS's second word)."""
+    win = run(["xdotool", "getactivewindow"])
+    if not win:
+        return ""
+    title = run(["xdotool", "getwindowname", win])
+    cls = run(["xprop", "-id", win, "WM_CLASS"]).rsplit('"', 2)
+    program = cls[-2] if len(cls) >= 3 else ""
+    return f"{title} ({program})" if title and program and program.lower() not in title.lower() else title or program
+
+
+def stamp(t=None):
+    t = time.localtime(t)
+    return time.strftime(f"[%Y-%m-%d {DAYS[t.tm_wday]} %H:%M]", t)
+
+
+def entry(text, src="", quote=""):
+    """An Org heading: the first line the title, the rest the body."""
+    lines = text.strip("\n").splitlines() or [""]
+    title = lines[0].strip() or "Note"
+    props = [":PROPERTIES:", f":CREATED:  {stamp()}"]
+    if src:
+        props.append(f":SOURCE:   {' '.join(src.split())}")
+    props.append(":END:")
+    # A body line starting with * would be a heading of its own: Org's escape.
+    body = [("," + l if l.lstrip(",").startswith("*") else l) for l in lines[1:]]
+    out = [f"* {title}", *props, *body]
+    if quote.strip():
+        out += ["#+begin_quote", *[("," + l if l.lstrip(",").startswith(("*", "#+")) else l)
+                                    for l in quote.strip("\n").splitlines()], "#+end_quote"]
+    return "\n".join(out) + "\n"
+
+
+def append(text, src="", quote=""):
+    path = inbox_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    new = not os.path.exists(path) or os.path.getsize(path) == 0
+    with open(path, "a") as f:
+        if new:
+            f.write("#+title: Inbox\n\n")
+        else:
+            with open(path, "rb") as r:
+                r.seek(-1, os.SEEK_END)
+                if r.read(1) != b"\n":
+                    f.write("\n")
+        f.write(entry(text, src, quote))
+    return path
+
+
+def notify(text):
+    run(["notify-send", "-a", "inbox", "-t", "3000", text])
+
+
+def emacs_box(src, quote):
+    """The box in Emacs, through org-capture; False when Emacs's server isn't there."""
+    if not shutil.which("emacsclient"):
+        return False
+    fd, ask = tempfile.mkstemp(prefix="inbox-", suffix=".json", dir=os.environ.get("XDG_RUNTIME_DIR"))
+    with os.fdopen(fd, "w") as f:
+        json.dump({"file": inbox_file(), "source": src, "quote": quote, "created": stamp()}, f)
+    el = os.path.realpath(EL)
+    form = f'(progn (load {json.dumps(el)} nil t) (vikix-inbox-capture {json.dumps(ask)}))'
+    try:
+        r = subprocess.run(["emacsclient", "-c", "-n", "-F", f'((name . "{FRAME}") (width . 80) (height . 14) (menu-bar-lines . 0) (tool-bar-lines . 0) (vertical-scroll-bars . nil))',
+                            "-e", form], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        r = None
+    if r is None or r.returncode != 0:
+        try:
+            os.unlink(ask)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def rofi_box(src, quote):
+    try:
+        text = subprocess.run(["rofi", "-dmenu", "-p", "note", "-l", "0",
+                               "-mesg", (f"Into the inbox · from {src}" if src else "Into the inbox")],
+                              input="", capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return
+    if text:
+        append(text, src, quote)
+        notify("Noted in the inbox")
+
+
+def box(with_quote):
+    src = source()
+    quote = run(["xclip", "-o", "-selection", "primary"]) if with_quote else ""
+    if not emacs_box(src, quote):
+        rofi_box(src, quote)
+
+
+def main(argv):
+    cmd = argv[0] if argv else "note"
+    if cmd == "note":
+        box(False)
+    elif cmd == "quote":
+        box(True)
+    elif cmd == "add":
+        args, src = argv[1:], ""
+        if args[:1] == ["--source"] and len(args) >= 2:
+            src, args = args[1], args[2:]
+        text = " ".join(args) if args else sys.stdin.read()
+        if not text.strip():
+            sys.exit("inbox add: nothing to note")
+        print(append(text, src))
+    elif cmd == "open":
+        path = inbox_file()
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("#+title: Inbox\n\n")
+        os.execvp("emacsclient", ["emacsclient", "-c", "-n", path])
+    elif cmd == "file":
+        print(inbox_file())
+    else:
+        print(__doc__.strip())
+        sys.exit(0 if cmd in ("-h", "--help", "help") else 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
