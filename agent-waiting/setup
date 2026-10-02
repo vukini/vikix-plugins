@@ -26,4 +26,4 @@ with open(tmp, "w") as f:
     f.write("\n")
 os.replace(tmp, path)
 PY
-echo "   added Claude Code's hooks for agent-waiting (new sessions use them; running ones after a restart)"
+echo "   added Claude Code's hooks for agent-waiting: new sessions use them; in a session already running, type /hooks (or restart it)"
