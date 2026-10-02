@@ -145,20 +145,32 @@ def search(q, s):
             data = json.load(f)
         return data["flights"], data["link"]
     from fast_flights import FlightQuery, Passengers, create_query, get_flights
-    legs = [FlightQuery(date=q["out"].isoformat(), from_airport=q["from"], to_airport=q["to"],
-                        max_stops=0 if q["direct"] else None)]
-    if q["back"]:
-        legs.append(FlightQuery(date=q["back"].isoformat(), from_airport=q["to"], to_airport=q["from"],
-                                max_stops=0 if q["direct"] else None))
-    query = create_query(flights=legs, seat=q["seat"], trip="round-trip" if q["back"] else "one-way",
-                         passengers=Passengers(adults=q["adults"], children=q["children"]),
-                         language=s.get("language", "en"), currency=s["currency"])
+
+    def query_for(direct):
+        legs = [FlightQuery(date=q["out"].isoformat(), from_airport=q["from"], to_airport=q["to"],
+                            max_stops=0 if direct else None)]
+        if q["back"]:
+            legs.append(FlightQuery(date=q["back"].isoformat(), from_airport=q["to"], to_airport=q["from"],
+                                    max_stops=0 if direct else None))
+        return create_query(flights=legs, seat=q["seat"], trip="round-trip" if q["back"] else "one-way",
+                            passengers=Passengers(adults=q["adults"], children=q["children"]),
+                            language=s.get("language", "en"), currency=s["currency"])
+
+    query = query_for(q["direct"])
     try:
-        results = get_flights(query)
+        results = list(get_flights(query))
     except Exception as e:
         raise Problem(f"the search didn't work ({type(e).__name__}): Google Flights may have changed; "
                       f"try the link instead: {query.url()}")
-    flights = []
+    # Google's answer to a plain search is a short list of "best" flights,
+    # which can leave out every direct one (Dubai-Singapore: four flights,
+    # all with a stop). So direct flights are asked for as well.
+    if not q["direct"]:
+        try:
+            results += list(get_flights(query_for(True)))
+        except Exception:
+            pass
+    flights, keys = [], set()
     for r in results:
         legs = r.flights
         if not legs:
@@ -168,12 +180,16 @@ def search(q, s):
             arr = datetime(*a.arrival.date, *a.arrival.time)
             dep = datetime(*b.departure.date, *b.departure.time)
             minutes += max(0, int((dep - arr).total_seconds() // 60))
-        flights.append({
+        f = {
             "price": r.price, "airlines": list(dict.fromkeys(r.airlines)),
             "depart": "%02d:%02d" % legs[0].departure.time, "arrive": "%02d:%02d" % legs[-1].arrival.time,
             "arrive_day": (date(*legs[-1].arrival.date) - date(*legs[0].departure.date)).days,
             "stops": len(legs) - 1, "via": [l.to_airport.code for l in legs[:-1]], "minutes": minutes,
-        })
+        }
+        key = (f["price"], f["depart"], f["arrive"], tuple(f["airlines"]), f["stops"])
+        if key not in keys:                         # the same flight from both searches, once
+            keys.add(key)
+            flights.append(f)
     flights.sort(key=lambda f: (f["price"], f["minutes"]))
     return flights, query.url()
 
