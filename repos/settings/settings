@@ -5,3 +5,5 @@ roots = ~/src
 extra = ~/.emacs.d ~/.dotfiles
 # Projects to leave out, by folder name:
 skip =
+# The terminal it opens: Vikix's own (Super+Return's) unless you name one.
+# terminal = kitty

@@ -30,11 +30,12 @@ something to push or pull. The details are a key away (Super+Alt+g)."
 (defcommand repos-term () ()
   "A terminal with what your git projects need, the commands that do it (Up brings
 them back), and a shell ready."
-  (run-shell-command "repos term"))
+  ;; Vikix's terminal (*vikix-terminal*, Super+Return's), not $TERMINAL.
+  (run-shell-command (format nil "VIKIX_TERMINAL='~a' repos term" *vikix-terminal*)))
 
 (defcommand repos-pick () ()
   "Your git projects: what each needs; push, pull, Magit or a terminal."
-  (run-shell-command "repos pick"))
+  (run-shell-command (format nil "VIKIX_TERMINAL='~a' repos pick" *vikix-terminal*)))
 
 (vikix-plugin-bar "repos" 'repos-bar :click "repos-term")
 (vikix-plugin-key "s-M-g" "repos-term" "Projects: what to push, pull or commit, in a terminal ready for it" "Projects")

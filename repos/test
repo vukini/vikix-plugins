@@ -49,9 +49,12 @@ ok grep -qF 'Up to date: clean' "$t/report"
 printf 'push = gpush {path}\n' >> "$t/config/vikix/plugins/repos/settings"
 "$here/bin/repos" report | grep -qF '$ gpush ~/src/ahead' || { echo "FAIL: your own push command"; fail=1; }
 
-"$here/bin/repos" term
-ok grep -q -- '--class vikix-repos --working-directory '"$t"'/src -e bash --rcfile' "$t/calls"
-rc=$(sed -n 's/.*--rcfile \([^ ]*\) -i.*/\1/p' "$t/calls")
+VIKIX_TERMINAL=alacritty TERMINAL=kitty "$here/bin/repos" term
+ok grep -q -- '^-f alacritty --class vikix-repos --working-directory '"$t"'/src -e bash --rcfile' "$t/calls"
+printf 'terminal = kitty\n' >> "$t/config/vikix/plugins/repos/settings"
+VIKIX_TERMINAL=alacritty "$here/bin/repos" term
+ok grep -q -- '^-f kitty --class vikix-repos --directory '"$t"'/src bash --rcfile' "$t/calls"
+rc=$(sed -n 's/.*--rcfile \([^ ]*\) -i.*/\1/p' "$t/calls" | head -1)
 ok grep -q '^repos report$' "$rc"
 ok test "$(grep -c '^history -s' "$rc")" = 4
 # The first suggested is pushed into the history last: Up brings it first.

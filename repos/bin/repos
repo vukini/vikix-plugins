@@ -41,7 +41,10 @@ GITHUB = re.compile(r"^(?:git@github\.com:|ssh://git@github\.com/|https://github
 
 def settings():
     s = {"roots": "~/src", "extra": "~/.emacs.d ~/.dotfiles", "skip": "",
-         "terminal": os.environ.get("TERMINAL", "alacritty"),
+         # Vikix's terminal (Super+Return's: StumpWM passes it), unless the
+         # settings name another. Not $TERMINAL: a shell's choice, often
+         # set for other programs, isn't the desktop's.
+         "terminal": os.environ.get("VIKIX_TERMINAL") or "alacritty",
          # The commands the report suggests; {path} is the project's folder.
          "push": "git -C {path} push --follow-tags",
          "pull": "git -C {path} pull --ff-only",
@@ -240,12 +243,29 @@ def rofi(prompt, lines, mesg=None):
     return int(out) if r.returncode == 0 and out.lstrip("-").isdigit() else None
 
 
+def terminal_argv(cwd, argv, cls=None):
+    """How to start the terminal in CWD running ARGV: each spells it its way."""
+    term = settings()["terminal"].split()
+    name = os.path.basename(term[0])
+    if name == "kitty":
+        return term + (["--class", cls] if cls else []) + ["--directory", cwd] + argv
+    if name == "foot":
+        return term + (["--app-id", cls] if cls else []) + ["--working-directory", cwd] + argv
+    if name in ("alacritty", "wezterm"):
+        extra = ["--class", cls] if cls and name == "alacritty" else []
+        return term + extra + ["--working-directory", cwd, "-e"] + argv
+    return term + ["-e"] + argv        # xterm, urxvt, st ...: in CWD by the process's own folder
+
+
+def launch_terminal(cwd, argv, cls=None):
+    subprocess.Popen(["setsid", "-f", *terminal_argv(cwd, argv, cls)], cwd=cwd,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def in_terminal(path, command):
     """COMMAND in a terminal in PATH, which stays open to read (and to type a passphrase)."""
-    term = settings()["terminal"]
     script = f"{command}; echo; echo '(Enter closes this)'; read _"
-    subprocess.Popen(["setsid", "-f", term, "--working-directory", path, "-e", "sh", "-c", script],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    launch_terminal(path, ["sh", "-c", script])
 
 
 def cmd_pick():
@@ -264,8 +284,7 @@ def cmd_pick():
     actions.append(("Magit in Emacs (see and commit the changes)",
                     lambda: subprocess.Popen(["setsid", "-f", "emacsclient", "-c", "-n", "-e", f"(magit-status {json.dumps(path)})"],
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
-    actions.append(("A terminal there", lambda: subprocess.Popen(["setsid", "-f", settings()["terminal"], "--working-directory", path],
-                                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+    actions.append(("A terminal there", lambda: launch_terminal(path, [os.environ.get("SHELL", "bash")])))
     actions.append(("git status", lambda: in_terminal(path, "git status")))
     j = rofi(st["name"], [a[0] for a in actions], mesg=f"{path}: {', '.join(needs(st)) or 'up to date'}")
     if j is not None and 0 <= j < len(actions):
@@ -336,9 +355,7 @@ def cmd_term():
             f.write("history -s " + json.dumps(c).replace("$", "\\$").replace("`", "\\`") + "\n")
         f.write(f'rm -f "{rc}"\n')
     root = os.path.expanduser(s["roots"].split()[0]) if s["roots"].split() else HOME
-    subprocess.Popen(["setsid", "-f", s["terminal"], "--class", "vikix-repos", "--working-directory", root,
-                      "-e", "bash", "--rcfile", rc, "-i"],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    launch_terminal(root, ["bash", "--rcfile", rc, "-i"], cls="vikix-repos")
 
 
 def cmd_watch():
