@@ -17,6 +17,8 @@ Vikix uses this repository at a pinned commit, one it has checked: an update can
 | Plugin | What it does |
 |---|---|
 | [agent-waiting](agent-waiting/) | The bar says `agent asks` when a Claude Code session in another window waits for your answer, and `agents done N` when sessions have finished; Super+Alt+w goes to the window |
+| [ai-usage](ai-usage/) | How much of your Claude plan you've used, the 5-hour window and the week (`plan 24% 41%`), from what Claude Code gives its status line; Super+Alt+u says when each resets |
+| [next-meeting](next-meeting/) | Your next meeting in the bar (`Standup 14:30 in 12m`, `now: Standup`), from your calendars' private links (Microsoft 365, Google, Todoist), a notification 5 minutes before; Super+Alt+j joins it (Teams in the Teams web app), Super+Alt+c lists the week |
 
 ## What a plugin is
 

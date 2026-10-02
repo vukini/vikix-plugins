@@ -1,0 +1,30 @@
+#!/bin/sh
+# setup — make ai-usage-statusline Claude Code's status line, in
+# ~/.claude/settings.json (a copy of it is kept first). A status line of
+# your own is kept, and runs through it: its line is still the one you see.
+set -eu
+settings="$HOME/.claude/settings.json"
+own_dir="${XDG_CONFIG_HOME:-$HOME/.config}/vikix/plugins/ai-usage"
+mkdir -p "$HOME/.claude" "$own_dir"
+[ -e "$settings" ] && cp -p "$settings" "$settings.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+python3 - "$settings" "$HOME/.local/bin/ai-usage-statusline" "$own_dir/your-statusline" <<'PY'
+import json, os, sys
+path, ours, keep = sys.argv[1:4]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except FileNotFoundError:
+    settings = {}
+line = settings.get("statusLine") or {}
+command = line.get("command", "") if isinstance(line, dict) else ""
+if command and command != ours:
+    with open(keep, "w") as f:      # yours, run through ours from now on
+        f.write(command + "\n")
+settings["statusLine"] = {"type": "command", "command": ours}
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+echo "   Claude Code's status line now notes your plan's use: sessions started from now on show it (a running one, once restarted)"

@@ -1,0 +1,41 @@
+#!/bin/sh
+# ai-usage's own test (tests/check.sh runs it): the status line notes the
+# plan's use and prints a short line; without rate limits it keeps the
+# last note and prints nothing new; a status line of your own is kept by
+# setup, runs through ours, and comes back with remove; setup twice is
+# setup once.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config"
+fail=0
+ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+sl() { printf '%s' "$1" | "$here/bin/ai-usage-statusline"; }
+note="$t/state/vikix/ai-usage"
+
+out=$(sl '{"rate_limits": {"five_hour": {"used_percentage": 23.5, "resets_at": 2000000000}, "seven_day": {"used_percentage": 41, "resets_at": 2000100000}}}')
+ok test "$out" = "plan 24% 5h · 41% week"
+ok grep -qx "five_hour 24 2000000000" "$note"
+ok grep -qx "seven_day 41 2000100000" "$note"
+sl '{"model": {"id": "x"}}' >/dev/null
+ok grep -qx "five_hour 24 2000000000" "$note"     # nothing new: the last note stays
+sl 'not json' >/dev/null
+
+mkdir -p "$t/.claude"
+echo '{"theme": "dark", "statusLine": {"type": "command", "command": "echo mine"}}' > "$t/.claude/settings.json"
+"$here/setup" >/dev/null; "$here/setup" >/dev/null
+ok grep -q '"command": "'"$t"'/.local/bin/ai-usage-statusline"' "$t/.claude/settings.json"
+ok grep -qx "echo mine" "$t/config/vikix/plugins/ai-usage/your-statusline"
+ok grep -q '"theme": "dark"' "$t/.claude/settings.json"
+out=$(sl '{"rate_limits": {"five_hour": {"used_percentage": 5, "resets_at": 2000000000}}}')
+ok test "$out" = "mine"                                  # your own line is what shows
+ok grep -qx "five_hour 5 2000000000" "$note"             # and the note is still made
+"$here/remove" >/dev/null
+ok grep -q '"command": "echo mine"' "$t/.claude/settings.json"
+ok test ! -e "$note"
+
+echo '{}' > "$t/.claude/settings.json"
+"$here/setup" >/dev/null; "$here/remove" >/dev/null
+ok test "$(python3 -c "import json,sys; print('statusLine' in json.load(open(sys.argv[1])))" "$t/.claude/settings.json")" = False
+exit "$fail"

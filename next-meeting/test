@@ -1,0 +1,119 @@
+#!/bin/sh
+# next-meeting's own test (tests/check.sh runs it), on two calendars made
+# here (as Outlook and Google write them), read through file:// links:
+# repeats are expanded, a skipped day (EXDATE) left out, a moved one
+# (RECURRENCE-ID) moved, all-day and cancelled ones left out, zones
+# (Outlook's Windows names) right; the links found (Teams, Meet); the
+# calendars listed by label and site, never the secret part; join opens a
+# Teams link in the Teams web app.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+python3 -c 'import icalendar, dateutil' 2>/dev/null || { echo "next-meeting test: needs python3-icalendar; skipped"; exit 0; }
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config" XDG_CACHE_HOME="$t/cache" TZ=Asia/Dubai
+mkdir -p "$t/bin" "$t/config/vikix/plugins/next-meeting" "$t/.local/share/vikix/webapps/teams"
+for p in setsid notify-send; do printf '#!/bin/sh\necho "%s $*" >> %s/calls\n' "$p" "$t" > "$t/bin/$p"; chmod +x "$t/bin/$p"; done
+export PATH="$t/bin:$PATH"
+fail=0
+ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+
+python3 - "$t" <<'PY'
+import sys
+from datetime import date, timedelta
+t = sys.argv[1]
+d = lambda n: (date.today() + timedelta(days=n)).strftime("%Y%m%d")
+work = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:Microsoft Exchange Server 2010
+BEGIN:VTIMEZONE
+TZID:Arabian Standard Time
+BEGIN:STANDARD
+DTSTART:16010101T000000
+TZOFFSETFROM:+0400
+TZOFFSETTO:+0400
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:one
+SUMMARY:Board review
+DTSTART;TZID=Arabian Standard Time:{d(1)}T100000
+DTEND;TZID=Arabian Standard Time:{d(1)}T103000
+X-MICROSOFT-SKYPETEAMSMEETINGURL:https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=x
+END:VEVENT
+BEGIN:VEVENT
+UID:daily
+SUMMARY:Standup
+DTSTART;TZID=Arabian Standard Time:{d(-1)}T090000
+DTEND;TZID=Arabian Standard Time:{d(-1)}T091500
+RRULE:FREQ=DAILY;COUNT=5
+EXDATE;TZID=Arabian Standard Time:{d(2)}T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:daily
+RECURRENCE-ID;TZID=Arabian Standard Time:{d(1)}T090000
+SUMMARY:Standup (moved)
+DTSTART;TZID=Arabian Standard Time:{d(1)}T110000
+DTEND;TZID=Arabian Standard Time:{d(1)}T111500
+END:VEVENT
+BEGIN:VEVENT
+UID:allday
+SUMMARY:Holiday
+DTSTART;VALUE=DATE:{d(1)}
+DTEND;VALUE=DATE:{d(2)}
+END:VEVENT
+BEGIN:VEVENT
+UID:gone
+SUMMARY:Cancelled thing
+STATUS:CANCELLED
+DTSTART;TZID=Arabian Standard Time:{d(1)}T150000
+DTEND;TZID=Arabian Standard Time:{d(1)}T160000
+END:VEVENT
+END:VCALENDAR
+"""
+home = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+BEGIN:VEVENT
+UID:g1
+SUMMARY:Dentist call
+DTSTART:{d(2)}T060000Z
+DTEND:{d(2)}T063000Z
+DESCRIPTION:Join with Google Meet: https://meet.google.com/abc-defg-hij\\nMore
+END:VEVENT
+END:VCALENDAR
+"""
+open(f"{t}/work.ics", "w").write(work.replace("\n", "\r\n"))
+open(f"{t}/home.ics", "w").write(home.replace("\n", "\r\n"))
+PY
+printf 'work file://%s/work.ics\nhome file://%s/home.ics\n' "$t" "$t" > "$t/config/vikix/plugins/next-meeting/calendars"
+"$here/bin/next-meeting" fetch >/dev/null
+out="$t/state/vikix/next-meeting"
+titles=$(cut -f4 "$out" | tr '\n' '|')
+ok test "$(grep -c 'Standup' "$out")" -ge 2
+ok grep -q "Standup (moved)" "$out"
+ok test "$(awk -F'\t' -v now="$(date +%s)" '$4 == "Standup" && $2 > now' "$out" | wc -l)" -eq "$(python3 -c '
+from datetime import datetime
+import time
+now=time.time()
+# days -1..3 at 09:00-09:15 (+04): yesterday over; tomorrow moved; day after skipped
+n=0
+for k in (0,3):
+    import datetime as D
+    s=D.datetime.combine(D.date.today()+D.timedelta(days=k), D.time(9,15))
+    if s.timestamp()>now: n+=1
+print(n)')"
+ok grep -q "	Board review	https://teams.microsoft.com/l/meetup-join/" "$out"
+ok grep -q "	Dentist call	https://meet.google.com/abc-defg-hij" "$out"
+ok test "$(grep -c -e Holiday -e Cancelled "$out")" = 0
+board=$(grep "Board review" "$out" | cut -f1)
+ok test "$(TZ=Asia/Dubai date -d "@$board" +%H:%M)" = 10:00
+ok test "$(TZ=Asia/Dubai date -d "@$(grep 'Dentist' "$out" | cut -f1)" +%H:%M)" = 10:00
+list=$("$here/bin/next-meeting" calendars)
+ok sh -c "echo '$list' | grep -q '^work'"
+case $list in *work.ics*|*file://*) echo "FAIL: calendars printed a link"; fail=1 ;; esac
+"$here/bin/next-meeting" list | grep -q "Board review" || { echo "FAIL: list"; fail=1; }
+"$here/bin/next-meeting" join
+ok grep -q -- "--user-data-dir=$t/.local/share/vikix/webapps/teams --class=vikix-teams" "$t/calls"
+[ "$fail" = 0 ] || echo "titles: $titles"
+exit "$fail"

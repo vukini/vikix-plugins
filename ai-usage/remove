@@ -1,0 +1,33 @@
+#!/bin/sh
+# remove — Claude Code's status line back as it was (yours, or none), and
+# the note of the plan's use gone. A copy of settings.json is kept first.
+set -eu
+settings="$HOME/.claude/settings.json"
+own="${XDG_CONFIG_HOME:-$HOME/.config}/vikix/plugins/ai-usage/your-statusline"
+if [ -e "$settings" ]; then
+  cp -p "$settings" "$settings.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$settings" "$own" <<'PY'
+import json, os, sys
+path, own = sys.argv[1:3]
+with open(path) as f:
+    settings = json.load(f)
+line = settings.get("statusLine") or {}
+if isinstance(line, dict) and "ai-usage-statusline" in line.get("command", ""):
+    try:
+        with open(own) as f:
+            mine = f.read().strip()
+    except FileNotFoundError:
+        mine = ""
+    if mine:
+        settings["statusLine"] = {"type": "command", "command": mine}
+    else:
+        settings.pop("statusLine", None)
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+fi
+rm -f "$own" "${XDG_STATE_HOME:-$HOME/.local/state}/vikix/ai-usage"
+echo "   Claude Code's status line is back as it was"

@@ -1,0 +1,8 @@
+name: ai-usage
+about: How much of your Claude plan you've used (the 5-hour window and the week) in the bar, and when it resets; Super+Alt+u says more
+kinds: bar key menu
+vikix: 0.71.44
+lisp: plugin.lisp
+setup: setup
+remove: remove
+changes: sets Claude Code's status line (statusLine in ~/.claude/settings.json) to ai-usage-statusline, which notes the plan usage Claude Code gives it and shows it there too; a status line of your own keeps running through it, and remove puts it back

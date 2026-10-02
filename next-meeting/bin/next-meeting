@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""next-meeting — your next meeting, from the calendars you give it.
+
+  next-meeting add LABEL      a calendar: asks its private link (iCal, .ics),
+                              without showing it as you paste it
+  next-meeting calendars      your calendars: their labels and sites (never
+                              the secret part of the link)
+  next-meeting forget LABEL   take one away
+  next-meeting fetch          read them all now (watch does this every 5 minutes)
+  next-meeting watch          fetch every 5 minutes, and a notification 5
+                              minutes before each meeting (started with the
+                              desktop while the plugin is added)
+  next-meeting list           the coming week's meetings
+  next-meeting pick           the same in rofi; Enter joins the one picked
+  next-meeting join           join the meeting on now, or the next one
+
+Where the private link is: Outlook on the web (Microsoft 365): Settings,
+Calendar, Shared calendars, Publish a calendar, then the ICS link. Google:
+the calendar's Settings, Integrate calendar, Secret address in iCal format.
+Todoist: its calendar feed link, where your plan offers one. Each is a key to
+that calendar: kept in ~/.config/vikix/plugins/next-meeting/calendars (600),
+fetched into ~/.cache/vikix/next-meeting (700), never printed.
+
+Joining: a Teams link opens in the Teams web app (vikix webapp add teams),
+Google Meet in the meet one when you have it, anything else in the browser.
+"""
+import getpass
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from datetime import date, datetime, timedelta, timezone
+
+HOME = os.path.expanduser("~")
+CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+STATE = os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state")
+CACHE = os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache")
+CALENDARS = os.path.join(CONFIG, "vikix", "plugins", "next-meeting", "calendars")
+FETCHED = os.path.join(CACHE, "vikix", "next-meeting")
+OUT = os.path.join(STATE, "vikix", "next-meeting")
+WEBAPPS = os.path.join(HOME, ".local", "share", "vikix", "webapps")
+DAYS = 8
+LINK = re.compile(r"https://(?:teams\.microsoft\.com/l/meetup-join/[^\s\"<>]+"
+                  r"|teams\.live\.com/meet/[^\s\"<>]+"
+                  r"|meet\.google\.com/[a-z]+-[a-z]+-[a-z]+"
+                  r"|[\w.-]*zoom\.us/[jw]/[^\s\"<>]+)")
+
+
+def say(text):
+    print(f":: {text}")
+
+
+def die(text):
+    print(f"next-meeting: {text}", file=sys.stderr)
+    sys.exit(1)
+
+
+# --- Your calendars -------------------------------------------------------------
+
+def calendars():
+    """[(label, url)] from the calendars file."""
+    try:
+        with open(CALENDARS) as f:
+            return [tuple(line.split(None, 1)) for line in f.read().splitlines()
+                    if line.strip() and not line.startswith("#") and len(line.split(None, 1)) == 2]
+    except FileNotFoundError:
+        return []
+
+
+def save_calendars(cals):
+    os.makedirs(os.path.dirname(CALENDARS), mode=0o700, exist_ok=True)
+    tmp = CALENDARS + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("# Your calendars for next-meeting: LABEL LINK. The links are secrets.\n")
+        for label, url in cals:
+            f.write(f"{label} {url}\n")
+    os.replace(tmp, CALENDARS)
+
+
+def site(url):
+    return urllib.parse.urlsplit(url).hostname or "?"
+
+
+def cmd_add(label):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,23}", label or ""):
+        die("a label is a short word: work, office, home")
+    url = getpass.getpass(f"   {label}'s private calendar link (.ics; it isn't shown): ").strip()
+    if url.startswith("webcal://"):
+        url = "https://" + url[len("webcal://"):]
+    if not url.startswith("https://"):
+        die("the link starts with https:// (or webcal://)")
+    cals = [c for c in calendars() if c[0] != label] + [(label, url)]
+    save_calendars(cals)
+    say(f"added {label} ({site(url)}); reading it now")
+    cmd_fetch()
+
+
+def cmd_forget(label):
+    cals = calendars()
+    if label not in [c[0] for c in cals]:
+        die(f"there's no calendar called {label} (next-meeting calendars)")
+    save_calendars([c for c in cals if c[0] != label])
+    try:
+        os.remove(os.path.join(FETCHED, f"{label}.ics"))
+    except FileNotFoundError:
+        pass
+    say(f"forgot {label}")
+    cmd_fetch()
+
+
+def cmd_calendars():
+    cals = calendars()
+    if not cals:
+        print("no calendars yet: next-meeting add work (it asks the link)")
+    for label, url in cals:
+        path = os.path.join(FETCHED, f"{label}.ics")
+        when = (datetime.fromtimestamp(os.path.getmtime(path)).strftime("read %H:%M")
+                if os.path.exists(path) else "not read yet")
+        print(f"{label:<12} {site(url):<34} {when}")
+
+
+# --- Reading them -------------------------------------------------------------------
+
+def fetch_one(label, url):
+    """The calendar's text, fetched into the cache; the cached one when the
+    fetch fails (offline), so the bar keeps what it knew."""
+    os.makedirs(FETCHED, mode=0o700, exist_ok=True)
+    path = os.path.join(FETCHED, f"{label}.ics")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "next-meeting (Vikix)"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = r.read()
+        fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(path + ".new", path)
+    except Exception as e:      # never the link in the message: it's a secret
+        print(f"next-meeting: couldn't read {label} ({site(url)}): {type(e).__name__}", file=sys.stderr)
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def as_utc(value):
+    """A DTSTART-like value as an aware UTC datetime (floating times are local)."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.astimezone()
+        return value.astimezone(timezone.utc)
+    return None                 # a date: an all-day item, not a meeting
+
+
+def meeting_link(event):
+    for key in ("X-MICROSOFT-SKYPETEAMSMEETINGURL", "X-GOOGLE-CONFERENCE", "URL", "LOCATION", "DESCRIPTION"):
+        value = event.get(key)
+        if value:
+            m = LINK.search(str(value))
+            if m:
+                return m.group(0).rstrip(".,;)>")
+    return ""
+
+
+def occurrences(event, start, end):
+    """The event's times (start, end) that fall within [start, end), its
+    repeats expanded; its own exceptions (EXDATE) left out."""
+    from dateutil.rrule import rrulestr
+    s = as_utc(event.decoded("DTSTART"))
+    if s is None:
+        return []
+    if event.get("DTEND") is not None:
+        e = as_utc(event.decoded("DTEND")) or s
+    elif event.get("DURATION") is not None:
+        e = s + event.decoded("DURATION")
+    else:
+        e = s
+    length = e - s
+    rule = event.get("RRULE")
+    if not rule:
+        return [(s, e)] if s < end and e > start else []
+    text = rule.to_ical().decode()
+    # dateutil wants UNTIL in UTC when DTSTART has a zone.
+    text = re.sub(r"UNTIL=(\d{8})(?:T(\d{6}))?Z?", lambda m: f"UNTIL={m.group(1)}T{m.group(2) or '235959'}Z", text)
+    try:
+        times = rrulestr(text, dtstart=s).between(start - length, end, inc=True)
+    except (ValueError, TypeError):
+        return [(s, e)] if s < end and e > start else []
+    skip = set()
+    exdates = event.get("EXDATE")
+    for ex in (exdates if isinstance(exdates, list) else [exdates] if exdates else []):
+        for d in ex.dts:
+            u = as_utc(d.dt)
+            if u:
+                skip.add(u)
+    return [(t, t + length) for t in times if t not in skip and t + length > start]
+
+
+def meetings(texts, start, end):
+    """[(start, end, label, title, link)] from the calendars' texts, sorted."""
+    from icalendar import Calendar
+    found = {}
+    moved = []                  # single changed occurrences (RECURRENCE-ID)
+    for label, text in texts:
+        try:
+            cal = Calendar.from_ical(text)
+        except Exception:
+            print(f"next-meeting: {label} isn't a calendar this can read", file=sys.stderr)
+            continue
+        for ev in cal.walk("VEVENT"):
+            if str(ev.get("STATUS", "")).upper() == "CANCELLED":
+                if ev.get("RECURRENCE-ID") is not None:
+                    moved.append((label, ev, True))
+                continue
+            if ev.get("RECURRENCE-ID") is not None:
+                moved.append((label, ev, False))
+                continue
+            try:
+                for s, e in occurrences(ev, start, end):
+                    found[(label, str(ev.get("UID")), s)] = (s, e, label, str(ev.get("SUMMARY", "(no title)")), meeting_link(ev))
+            except Exception:
+                continue
+    for label, ev, cancelled in moved:
+        try:
+            orig = as_utc(ev.decoded("RECURRENCE-ID"))
+            found.pop((label, str(ev.get("UID")), orig), None)
+            if not cancelled:
+                for s, e in occurrences(ev, start, end):
+                    found[(label, str(ev.get("UID")), s)] = (s, e, label, str(ev.get("SUMMARY", "(no title)")), meeting_link(ev))
+        except Exception:
+            continue
+    return sorted(found.values())
+
+
+def cmd_fetch(quiet=False):
+    now = datetime.now(timezone.utc)
+    texts = [(label, t) for label, url in calendars() if (t := fetch_one(label, url))]
+    found = meetings(texts, now - timedelta(hours=12), now + timedelta(days=DAYS))
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT + ".new", "w") as f:
+        for s, e, label, title, link in found:
+            clean = " ".join(title.replace("\t", " ").split())
+            f.write(f"{int(s.timestamp())}\t{int(e.timestamp())}\t{label}\t{clean}\t{link}\n")
+    os.replace(OUT + ".new", OUT)
+    if not quiet:
+        say(f"{len(found)} meeting(s) in the coming week, from {len(texts)} calendar(s)")
+
+
+# --- What's next, and joining --------------------------------------------------------------
+
+def coming():
+    """The meetings noted, not yet over: [(start, end, label, title, link)]."""
+    now = time.time()
+    try:
+        with open(OUT) as f:
+            rows = [line.rstrip("\n").split("\t") for line in f]
+    except FileNotFoundError:
+        return []
+    return [(int(r[0]), int(r[1]), r[2], r[3], r[4]) for r in rows if len(r) == 5 and int(r[1]) > now]
+
+
+def line(m):
+    s = datetime.fromtimestamp(m[0])
+    day = "today" if s.date() == date.today() else s.strftime("%a %d %b")
+    return f"{day} {s:%H:%M}-{datetime.fromtimestamp(m[1]):%H:%M}  {m[3]}  ({m[2]}{', ' + kind(m[4]) if m[4] else ''})"
+
+
+def kind(link):
+    return ("Teams" if "teams." in link else "Meet" if "meet.google" in link
+            else "Zoom" if "zoom.us" in link else "link")
+
+
+def open_link(link):
+    """A Teams link in the Teams web app, Meet in the meet one, else the browser."""
+    for app, marker in (("teams", "teams."), ("meet", "meet.google.com")):
+        profile = os.path.join(WEBAPPS, app)
+        if marker in link and os.path.isdir(profile):
+            subprocess.Popen(["setsid", "-f", "chromium", f"--user-data-dir={profile}", f"--class=vikix-{app}",
+                              "--no-first-run", "--no-default-browser-check", f"--app={link}"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+    subprocess.Popen(["setsid", "-f", "xdg-open", link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def notify(title, body):
+    subprocess.run(["notify-send", "-a", "Vikix", title, body], check=False)
+
+
+def cmd_join():
+    now = time.time()
+    ms = [m for m in coming() if m[4]]
+    if not ms:
+        notify("No meeting to join", "None of the coming meetings has a link.")
+        return
+    on = [m for m in ms if m[0] - 600 <= now < m[1]]     # on now, or starting within 10 minutes
+    m = on[0] if on else ms[0]
+    open_link(m[4])
+
+
+def cmd_list():
+    ms = coming()
+    if not calendars():
+        print("no calendars yet: next-meeting add work (it asks the link)")
+    for m in ms:
+        print(line(m))
+
+
+def cmd_pick():
+    ms = coming()
+    if not ms:
+        notify("No meetings", "Nothing in the coming week" if calendars() else "Add a calendar: next-meeting add work")
+        return
+    menu = "\n".join(line(m) for m in ms)
+    r = subprocess.run(["rofi", "-dmenu", "-i", "-p", "Meetings", "-format", "i"],
+                       input=menu, capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip().isdigit():
+        m = ms[int(r.stdout.strip())]
+        if m[4]:
+            open_link(m[4])
+        else:
+            notify(m[3], "This one has no meeting link.")
+
+
+def cmd_watch():
+    told = set()
+    last = 0
+    while True:
+        if time.time() - last >= 300:
+            try:
+                cmd_fetch(quiet=True)
+            except Exception as e:
+                print(f"next-meeting: {type(e).__name__}", file=sys.stderr)
+            last = time.time()
+        now = time.time()
+        for m in coming():
+            if 0 < m[0] - now <= 300 and (m[0], m[3]) not in told:
+                told.add((m[0], m[3]))
+                notify(f"{m[3]} at {datetime.fromtimestamp(m[0]):%H:%M}",
+                       f"{m[2]}{' · ' + kind(m[4]) + ': Super+Alt+j joins' if m[4] else ''}")
+        time.sleep(30)
+
+
+def main(argv):
+    cmd, *rest = argv or ["help"]
+    if cmd == "add" and len(rest) == 1:
+        cmd_add(rest[0])
+    elif cmd == "forget" and len(rest) == 1:
+        cmd_forget(rest[0])
+    elif cmd == "calendars":
+        cmd_calendars()
+    elif cmd == "fetch":
+        cmd_fetch()
+    elif cmd == "watch":
+        cmd_watch()
+    elif cmd == "list":
+        cmd_list()
+    elif cmd == "pick":
+        cmd_pick()
+    elif cmd == "join":
+        cmd_join()
+    else:
+        print(__doc__.strip())
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,42 @@
+#!/bin/sh
+# ai-usage-statusline — Claude Code's status line (the plugin's setup sets
+# it). Claude Code hands it, on every refresh, what it knows: with a Pro or
+# Max plan, after its first answer, rate_limits (the 5-hour window, the
+# week, an extra-usage limit: a percentage and when each resets). This
+# notes them in ~/.local/state/vikix/ai-usage for the bar, then prints the
+# line Claude Code shows under its prompt: your own status line's, when
+# you had one (setup kept it), or a short one of its own.
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/vikix/ai-usage"
+own="${XDG_CONFIG_HOME:-$HOME/.config}/vikix/plugins/ai-usage/your-statusline"
+input=$(cat)
+
+printf '%s' "$input" | python3 -c '
+import json, os, sys, time
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+limits = data.get("rate_limits") or {}
+lines = []
+for name in ("five_hour", "seven_day", "spend_limit"):
+    w = limits.get(name)
+    if isinstance(w, dict) and w.get("used_percentage") is not None:
+        used = float(w.get("used_percentage"))
+        resets = int(w.get("resets_at") or 0)
+        lines.append(f"{name} {used:.0f} {resets}")
+if not lines:
+    sys.exit(0)        # nothing known yet (no answer this session): keep the last note
+path = sys.argv[1]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path + ".new", "w") as f:
+    f.write("\n".join(lines + [f"noted {int(time.time())}"]) + "\n")
+os.replace(path + ".new", path)
+' "$state" 2>/dev/null
+
+if [ -s "$own" ]; then
+  printf '%s' "$input" | sh -c "$(cat "$own")"
+else
+  awk '$1 == "five_hour" { f = $2 } $1 == "seven_day" { w = $2 }
+       END { if (f != "" || w != "") printf "plan %s%s%s", (f != "" ? f "% 5h" : ""), (f != "" && w != "" ? " · " : ""), (w != "" ? w "% week" : "") }' "$state" 2>/dev/null
+fi
