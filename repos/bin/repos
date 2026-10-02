@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""repos — what your git projects need: pushing, pulling, committing.
+
+  repos            each project: its branch, and what it needs
+  repos report     what each needs, and the commands that do it
+  repos term       a terminal with the report, and a shell ready: the
+                   commands are in its history, so Up brings each back
+                   (Super+Alt+g)
+  repos pick       the same in rofi; Enter offers what to do with one
+                   (push, pull, a terminal there, Magit in Emacs)
+  repos fetch      ask GitHub now what's new (watch does it every 30 minutes)
+  repos watch      look every 2 minutes, fetch every 30 (started with the
+                   desktop while the plugin is added); the bar reads it
+
+What it looks at: every git project directly in ~/src, and ~/.emacs.d and
+~/.dotfiles when they're git projects (settings: roots, extra, skip). For each:
+changes not committed, commits not pushed, commits on GitHub not pulled, tags
+not pushed, and stashes left behind.
+
+Fetching never needs your SSH key's passphrase: a GitHub project is asked over
+HTTPS, through gh's login when there is one (private projects too); any other
+remote only if ssh can reach it without asking. It only updates what git
+knows of the remote (origin/main): it never pulls, merges or pushes by itself.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+STATE = os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state")
+SETTINGS = os.path.join(CONFIG, "vikix", "plugins", "repos", "settings")
+OUT = os.path.join(STATE, "vikix", "repos.json")
+TAGS = os.path.join(STATE, "vikix", "repos-remote-tags.json")   # the remotes' tags, by project, from the last fetch
+GITHUB = re.compile(r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+/[^/]+?)(?:\.git)?/?$")
+
+
+def settings():
+    s = {"roots": "~/src", "extra": "~/.emacs.d ~/.dotfiles", "skip": "",
+         "terminal": os.environ.get("TERMINAL", "alacritty"),
+         # The commands the report suggests; {path} is the project's folder.
+         "push": "git -C {path} push --follow-tags",
+         "pull": "git -C {path} pull --ff-only",
+         "look": "git -C {path} status"}
+    try:
+        with open(SETTINGS) as f:
+            for line in f:
+                if "=" in line and not line.lstrip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    s[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass
+    return s
+
+
+def git(path, *args, check=False, timeout=60, env=None):
+    r = subprocess.run(["git", "-C", path, *args], capture_output=True, text=True,
+                       timeout=timeout, env=env)
+    if check and r.returncode != 0:
+        raise RuntimeError(r.stderr.strip())
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def projects(s=None):
+    """[(name, path)]: git projects in the roots (not their worktrees), and the extras."""
+    s = s or settings()
+    skip = set(s["skip"].split())
+    found = []
+    for root in s["roots"].split():
+        root = os.path.expanduser(root)
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            path = os.path.join(root, name)
+            # A worktree has a .git file, not a folder: it's its project's.
+            if name not in skip and os.path.isdir(os.path.join(path, ".git")):
+                found.append((name, path))
+    for extra in s["extra"].split():
+        path = os.path.expanduser(extra)
+        name = os.path.basename(path.rstrip("/"))
+        if name not in skip and os.path.isdir(os.path.join(path, ".git")):
+            found.append((name, path))
+    return found
+
+
+def look(name, path):
+    """One project's state, from what git knows (no network)."""
+    st = {"name": name, "path": path, "branch": git(path, "rev-parse", "--abbrev-ref", "HEAD") or "?"}
+    status = git(path, "status", "--porcelain") or ""
+    st["changed"] = len([l for l in status.splitlines() if l and not l.startswith("??")])
+    st["untracked"] = len([l for l in status.splitlines() if l.startswith("??")])
+    counts = git(path, "rev-list", "--left-right", "--count", "HEAD...@{u}")
+    if counts:
+        ahead, behind = counts.split()
+        st["ahead"], st["behind"], st["upstream"] = int(ahead), int(behind), True
+    else:
+        st["ahead"], st["behind"], st["upstream"] = 0, 0, False
+    st["stashes"] = len((git(path, "stash", "list") or "").splitlines())
+    # Tags here that the remote doesn't have, by the list the last fetch kept
+    # (none known before a fetch: then nothing is claimed).
+    remote_tags = load_tags().get(path)
+    local_tags = set((git(path, "tag") or "").split())
+    st["tags"] = sorted(local_tags - set(remote_tags)) if remote_tags is not None else []
+    st["worktrees"] = max(0, len([l for l in (git(path, "worktree", "list", "--porcelain") or "").splitlines()
+                                   if l.startswith("worktree ")]) - 1)
+    return st
+
+
+def load_tags():
+    try:
+        with open(TAGS) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_tags(tags):
+    os.makedirs(os.path.dirname(TAGS), exist_ok=True)
+    with open(TAGS + ".new", "w") as f:
+        json.dump(tags, f)
+    os.replace(TAGS + ".new", TAGS)
+
+
+def github_repo(path):
+    url = git(path, "remote", "get-url", "origin") or ""
+    m = GITHUB.match(url)
+    return m.group(1) if m else None
+
+
+def fetch_one(path):
+    """Update origin/* (and the remote's tag list) without a passphrase.
+    True when it worked."""
+    repo = github_repo(path)
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10")
+    helper = []
+    if repo:
+        url = f"https://github.com/{repo}.git"
+        if shutil.which("gh"):
+            helper = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
+    else:
+        url = "origin"
+    r = subprocess.run(["git", "-C", path, *helper, "fetch", "-q", "--no-tags", url,
+                        "+refs/heads/*:refs/remotes/origin/*"],
+                       capture_output=True, text=True, timeout=90, env=env)
+    if r.returncode != 0:
+        return False
+    tags = subprocess.run(["git", "-C", path, *helper, "ls-remote", "--tags", url],
+                          capture_output=True, text=True, timeout=60, env=env)
+    if tags.returncode == 0:
+        names = sorted({l.split("refs/tags/")[1].removesuffix("^{}") for l in tags.stdout.splitlines() if "refs/tags/" in l})
+        known = load_tags()
+        known[path] = names
+        save_tags(known)
+    return True
+
+
+def write(states, fetched=None):
+    old = read()
+    data = {"looked": int(time.time()), "fetched": fetched if fetched is not None else old.get("fetched", 0),
+            "projects": states}
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT + ".new", "w") as f:
+        json.dump(data, f, indent=1)
+    os.replace(OUT + ".new", OUT)
+    # One line for the bar (plugin.lisp): what to push, pull and commit.
+    push = sum(st["ahead"] + (1 if st["tags"] else 0) for st in states)
+    pull = sum(st["behind"] for st in states)
+    changed = sum(1 for st in states if st["changed"])
+    with open(OUT.replace(".json", "-bar") + ".new", "w") as f:
+        f.write(f"{push} {pull} {changed} {sum(1 for st in states if needs(st))}\n")
+    os.replace(OUT.replace(".json", "-bar") + ".new", OUT.replace(".json", "-bar"))
+
+
+def read():
+    try:
+        with open(OUT) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def needs(st):
+    """What a project needs, in a few words; empty when nothing."""
+    words = []
+    if st["changed"]:
+        words.append(f"{st['changed']} changed")
+    if st["ahead"]:
+        words.append(f"push {st['ahead']}")
+    if st["tags"]:
+        words.append(f"push {len(st['tags'])} tag{'s' if len(st['tags']) > 1 else ''}")
+    if st["behind"]:
+        words.append(f"pull {st['behind']}")
+    if st["stashes"]:
+        words.append(f"{st['stashes']} stash{'es' if st['stashes'] > 1 else ''}")
+    if not st["upstream"]:
+        words.append("no upstream")
+    return words
+
+
+def look_all(fetch=False):
+    found = projects()
+    fetched = None
+    if fetch:
+        for _, path in found:
+            try:
+                fetch_one(path)
+            except Exception:
+                pass
+        fetched = int(time.time())
+    states = []
+    for name, path in found:
+        try:
+            states.append(look(name, path))
+        except Exception:
+            continue
+    write(states, fetched)
+    return states
+
+
+def cmd_list():
+    states = look_all()
+    when = read().get("fetched")
+    for st in states:
+        n = needs(st)
+        print(f"{st['name']:<20} {st['branch']:<14} {', '.join(n) if n else 'up to date'}"
+              + (f"  ({st['worktrees']} worktree{'s' if st['worktrees'] > 1 else ''})" if st["worktrees"] else ""))
+    print(f"(GitHub last asked: {time.strftime('%H:%M', time.localtime(when)) if when else 'not yet: repos fetch'})")
+
+
+def rofi(prompt, lines, mesg=None):
+    args = ["rofi", "-dmenu", "-i", "-p", prompt, "-format", "i", "-theme-str", "window { width: 60%; }"]
+    if mesg:
+        args += ["-mesg", mesg]
+    r = subprocess.run(args, input="\n".join(lines), capture_output=True, text=True)
+    out = r.stdout.strip()
+    return int(out) if r.returncode == 0 and out.lstrip("-").isdigit() else None
+
+
+def in_terminal(path, command):
+    """COMMAND in a terminal in PATH, which stays open to read (and to type a passphrase)."""
+    term = settings()["terminal"]
+    script = f"{command}; echo; echo '(Enter closes this)'; read _"
+    subprocess.Popen(["setsid", "-f", term, "--working-directory", path, "-e", "sh", "-c", script],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def cmd_pick():
+    states = look_all()
+    lines = [f"{st['name']:<20} {st['branch']:<14} {', '.join(needs(st)) or 'up to date'}" for st in states]
+    i = rofi("Projects", lines, mesg="What each needs. Enter: what to do with it")
+    if i is None or not 0 <= i < len(states):
+        return
+    st = states[i]
+    path = st["path"]
+    actions = []
+    if st["ahead"] or st["tags"]:
+        actions.append(("Push (your SSH key may ask its passphrase)", lambda: in_terminal(path, "git push --follow-tags")))
+    if st["behind"]:
+        actions.append(("Pull (only a fast-forward)", lambda: in_terminal(path, "git pull --ff-only")))
+    actions.append(("Magit in Emacs (see and commit the changes)",
+                    lambda: subprocess.Popen(["setsid", "-f", "emacsclient", "-c", "-n", "-e", f"(magit-status {json.dumps(path)})"],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+    actions.append(("A terminal there", lambda: subprocess.Popen(["setsid", "-f", settings()["terminal"], "--working-directory", path],
+                                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+    actions.append(("git status", lambda: in_terminal(path, "git status")))
+    j = rofi(st["name"], [a[0] for a in actions], mesg=f"{path}: {', '.join(needs(st)) or 'up to date'}")
+    if j is not None and 0 <= j < len(actions):
+        actions[j][1]()
+
+
+def short(path):
+    return "~" + path[len(HOME):] if path.startswith(HOME + "/") else path
+
+
+def suggestions(st, s):
+    """The commands that do what ST needs, as you'd type them."""
+    p = short(st["path"])
+    cmds = []
+    if st["changed"]:
+        cmds.append(s["look"].format(path=p))
+    if st["ahead"] or st["tags"]:
+        cmds.append(s["push"].format(path=p))
+    if st["behind"]:
+        cmds.append(s["pull"].format(path=p))
+    if st["stashes"]:
+        cmds.append(f"git -C {p} stash list")
+    return cmds
+
+
+def report(states):
+    """The report's text, and every command it suggests, in order."""
+    s = settings()
+    when = read().get("fetched")
+    lines, cmds = [], []
+    todo = [st for st in states if needs(st)]
+    lines.append(f"Projects: {len(todo)} of {len(states)} need something"
+                 f" (GitHub asked {time.strftime('%H:%M', time.localtime(when)) if when else 'not yet'})")
+    lines.append("")
+    for st in todo:
+        lines.append(f"  {st['name']:<20} {st['branch']:<12} {', '.join(needs(st))}")
+        for c in suggestions(st, s):
+            lines.append(f"      $ {c}")
+            cmds.append(c)
+    done = [st["name"] for st in states if not needs(st)]
+    if done:
+        lines.append("")
+        lines.append("  Up to date: " + ", ".join(done))
+    lines.append("")
+    if cmds:
+        lines.append("Up brings back these commands, one by one. repos fetch asks GitHub again; repos the list.")
+    return "\n".join(lines), cmds
+
+
+def cmd_report():
+    text, _ = report(look_all())
+    print(text)
+
+
+def cmd_term():
+    """A terminal: the report, then an interactive shell in the first root,
+    with the suggested commands in its history (Up brings them back)."""
+    states = look_all()
+    _, cmds = report(states)
+    s = settings()
+    run = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    rc = os.path.join(run, f"repos-rc-{os.getpid()}")
+    with open(rc, "w") as f:
+        f.write('[ -f ~/.bashrc ] && . ~/.bashrc\n')
+        f.write('repos report\n')
+        # Last pushed is first back with Up: so the first suggestion goes last.
+        for c in reversed(cmds):
+            f.write("history -s " + json.dumps(c).replace("$", "\\$").replace("`", "\\`") + "\n")
+        f.write(f'rm -f "{rc}"\n')
+    root = os.path.expanduser(s["roots"].split()[0]) if s["roots"].split() else HOME
+    subprocess.Popen(["setsid", "-f", s["terminal"], "--class", "vikix-repos", "--working-directory", root,
+                      "-e", "bash", "--rcfile", rc, "-i"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def cmd_watch():
+    last_fetch = 0
+    while True:
+        try:
+            due = time.time() - last_fetch >= 30 * 60
+            look_all(fetch=due)
+            if due:
+                last_fetch = time.time()
+        except Exception as e:
+            print(f"repos: {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(120)
+
+
+def main(argv):
+    cmd = argv[0] if argv else "list"
+    if cmd == "list":
+        cmd_list()
+    elif cmd == "pick":
+        cmd_pick()
+    elif cmd == "report":
+        cmd_report()
+    elif cmd == "term":
+        cmd_term()
+    elif cmd == "fetch":
+        look_all(fetch=True)
+        cmd_list()
+    elif cmd == "watch":
+        cmd_watch()
+    else:
+        print(__doc__.strip())
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,59 @@
+#!/bin/sh
+# repos' own test (tests/check.sh runs it), on projects made here with local
+# remotes, so nothing reaches GitHub: changes, commits ahead, commits behind
+# (after a fetch), a tag not pushed, a stash, and a clean one; worktrees are
+# their project's, not projects; the bar's line; the report's commands
+# (yours, when the settings name them); the terminal's shell gets them in
+# its history, the first suggested coming back first.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config" XDG_RUNTIME_DIR="$t/run"
+export GIT_CONFIG_GLOBAL="$t/gitconfig" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+mkdir -p "$t/src" "$t/remotes" "$t/run" "$t/bin"
+printf '[init]\n\tdefaultBranch = main\n' > "$t/gitconfig"
+printf '#!/bin/sh\necho "$*" >> %s/calls\n' "$t" > "$t/bin/setsid"; chmod +x "$t/bin/setsid"
+export PATH="$t/bin:$PATH"
+fail=0
+ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+new() {   # new NAME: a project with a remote, one commit pushed
+  git init -q --bare "$t/remotes/$1.git"
+  git clone -q "$t/remotes/$1.git" "$t/src/$1" 2>/dev/null
+  echo one > "$t/src/$1/f"; git -C "$t/src/$1" add f; git -C "$t/src/$1" commit -qm one
+  git -C "$t/src/$1" push -q -u origin main 2>/dev/null
+}
+new clean; new dirty; new ahead; new behind
+echo two >> "$t/src/dirty/f"
+echo two >> "$t/src/ahead/f"; git -C "$t/src/ahead" commit -qam two; git -C "$t/src/ahead" tag v1
+echo x > "$t/src/ahead/g"; git -C "$t/src/ahead" add g; git -C "$t/src/ahead" stash -q
+git clone -q "$t/remotes/behind.git" "$t/other" 2>/dev/null
+echo two >> "$t/other/f"; git -C "$t/other" commit -qam two; git -C "$t/other" push -q 2>/dev/null
+git -C "$t/src/clean" worktree add -q "$t/src/clean-wt" -b wt 2>/dev/null
+mkdir -p "$t/config/vikix/plugins/repos"
+printf 'roots = ~/src\nextra =\n' > "$t/config/vikix/plugins/repos/settings"
+
+"$here/bin/repos" fetch > "$t/list"
+ok grep -qE '^clean +main +up to date  \(1 worktree\)' "$t/list"
+ok sh -c "! grep -q '^clean-wt' '$t/list'"
+ok grep -qE '^dirty .* 1 changed' "$t/list"
+ok grep -qE '^ahead .* push 1, push 1 tag, 1 stash' "$t/list"
+ok grep -qE '^behind .* pull 1' "$t/list"
+ok test "$(cat "$t/state/vikix/repos-bar")" = "2 1 1 3"
+
+"$here/bin/repos" report > "$t/report"
+ok grep -qF '$ git -C ~/src/ahead push --follow-tags' "$t/report"
+ok grep -qF '$ git -C ~/src/behind pull --ff-only' "$t/report"
+ok grep -qF '$ git -C ~/src/dirty status' "$t/report"
+ok grep -qF 'Up to date: clean' "$t/report"
+printf 'push = gpush {path}\n' >> "$t/config/vikix/plugins/repos/settings"
+"$here/bin/repos" report | grep -qF '$ gpush ~/src/ahead' || { echo "FAIL: your own push command"; fail=1; }
+
+"$here/bin/repos" term
+ok grep -q -- '--class vikix-repos --working-directory '"$t"'/src -e bash --rcfile' "$t/calls"
+rc=$(sed -n 's/.*--rcfile \([^ ]*\) -i.*/\1/p' "$t/calls")
+ok grep -q '^repos report$' "$rc"
+ok test "$(grep -c '^history -s' "$rc")" = 4
+# The first suggested is pushed into the history last: Up brings it first.
+ok test "$(grep '^history -s' "$rc" | tail -1)" = 'history -s "gpush ~/src/ahead"'
+exit "$fail"

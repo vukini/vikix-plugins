@@ -1,0 +1,7 @@
+# Settings for the repos plugin (yours; Vikix never overwrites this file).
+# Folders whose git projects it looks at (each project directly inside):
+roots = ~/src
+# Single projects elsewhere:
+extra = ~/.emacs.d ~/.dotfiles
+# Projects to leave out, by folder name:
+skip =
