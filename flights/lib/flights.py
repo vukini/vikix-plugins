@@ -187,8 +187,8 @@ def row(f, currency, quickest):
     marks = []
     if quickest:
         marks.append("quickest")
-    return (f"{currency} {f['price']:>6}  {f['depart']}-{f['arrive']}{'+' + str(f['arrive_day']) if f['arrive_day'] else ''}"
-            f"  {hours(f['minutes']):>6}  {stops:<16}  {', '.join(f['airlines'])}"
+    times = f"{f['depart']}-{f['arrive']}" + (f"+{f['arrive_day']}" if f['arrive_day'] else "")
+    return (f"{currency} {f['price']:>6}  {times:<13}  {hours(f['minutes']):>6}  {stops:<16}  {', '.join(f['airlines'])}"
             + (f"  [{', '.join(marks)}]" if marks else ""))
 
 
@@ -286,7 +286,8 @@ def run(line):
 
 
 def rofi(prompt, lines=(), mesg=None):
-    args = ["rofi", "-dmenu", "-i", "-p", prompt, "-format", "i:s"]
+    args = ["rofi", "-dmenu", "-i", "-p", prompt, "-format", "i:s",
+            "-theme-str", "window { width: 72%; }"]
     if mesg:
         args += ["-mesg", mesg]
     r = subprocess.run(args, input="\n".join(lines), capture_output=True, text=True)
