@@ -20,6 +20,10 @@ account, no key): unofficial, so a change on Google's side can break it until
 the library catches up. This only searches: booking happens in the browser,
 on the site you choose, never here.
 
+Every search, with all its results, and each watched route's price at each
+check are kept in Vikix's record store: vikix records search singapore,
+vikix records list flights --kind price.
+
 Settings: ~/.config/vikix/plugins/flights/settings (currency, home airport).
 """
 import json
@@ -45,6 +49,46 @@ NOT_AIRPORTS = set(MONTHS) | {"the", "and", "for", "out", "ret", "via", "one", "
 
 class Problem(Exception):
     pass
+
+
+def keep_record(records):
+    """Into the record store (vikix records), to search later; quietly
+    nothing when this Vikix has no store yet."""
+    try:
+        subprocess.run(["vikix", "records", "add"], input=json.dumps(records, ensure_ascii=False), text=True,
+                       capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
+def search_key(q, s):
+    parts = [q["from"], q["to"], q["out"].isoformat()]
+    if q["back"]:
+        parts += ["back", q["back"].isoformat()]
+    if q["seat"] != "economy":
+        parts.append(q["seat"])
+    if q["direct"]:
+        parts.append("direct")
+    if q["adults"] != 1 or q["children"]:
+        parts.append(f"{q['adults']}a{q['children']}c")
+    return " ".join(parts + [s["currency"]])
+
+
+def keep_search(q, s, flights, link):
+    """A search and all its results: one record a search (the same search
+    again updates it)."""
+    if not flights:
+        return
+    cur = s["currency"]
+    direct = [f for f in flights if f["stops"] == 0]
+    title = f"{describe(q)}: from {cur} {flights[0]['price']}" + (
+        f", direct {cur} {direct[0]['price']}" if direct and direct[0] is not flights[0] else "")
+    keep_record({"plugin": "flights", "kind": "search", "key": search_key(q, s), "title": title,
+          "body": "\n".join(rows(flights, cur)), "link": link,
+          "data": {"from": q["from"], "to": q["to"], "out": q["out"].isoformat(),
+                   "back": q["back"].isoformat() if q["back"] else None, "seat": q["seat"],
+                   "direct": q["direct"], "adults": q["adults"], "children": q["children"],
+                   "currency": cur, "flights": flights}})
 
 
 def settings():
@@ -275,6 +319,11 @@ def check(quiet=False):
             continue
         cheapest = flights[0]["price"]
         before = seen.get(line, {}).get("price")
+        # A price point at each check: the route's price history.
+        keep_record({"plugin": "flights", "kind": "price", "title": f"{describe(q)}: {s['currency']} {cheapest}",
+              "body": f"watched: {line}", "link": link,
+              "data": {"line": line, "price": cheapest, "currency": s["currency"],
+                       "airlines": flights[0]["airlines"], "stops": flights[0]["stops"]}})
         seen[line] = {"price": cheapest, "lowest": min(cheapest, seen.get(line, {}).get("lowest", cheapest)),
                       "checked": int(time.time()), "link": link}
         if before is not None and cheapest < before:
@@ -295,6 +344,7 @@ def run(line):
     s = settings()
     q = parse(line, s["home"])
     flights, link = search(q, s)
+    keep_search(q, s, flights, link)
     print(describe(q) + (f", cheapest {s['currency']} {flights[0]['price']}" if flights else ": no flights found"))
     for r in rows(flights, s["currency"])[:15]:
         print("  " + r)
@@ -336,6 +386,7 @@ def pick():
     if not flights:
         notify("Flights", f"{describe(q)}: nothing found")
         return
+    keep_search(q, s, flights, link)
     entries = rows(flights, s["currency"]) + [f"Watch this route: a notification when it gets cheaper"]
     i, _ = rofi("Flights", entries, mesg=f"{describe(q)}: Enter opens it on Google Flights, to book there")
     if i is None:

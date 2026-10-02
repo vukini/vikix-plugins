@@ -11,6 +11,10 @@ trap 'rm -rf "$t"' EXIT
 export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config"
 fail=0
 ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+# vikix records add: a stand-in that keeps what it was given.
+mkdir -p "$t/fakebin"
+printf '#!/bin/sh\ncat >> %s/records\necho >> %s/records\n' "$t" "$t" > "$t/fakebin/vikix"; chmod +x "$t/fakebin/vikix"
+export PATH="$t/fakebin:$PATH"
 sl() { printf '%s' "$1" | "$here/bin/ai-usage-statusline"; }
 note="$t/state/vikix/ai-usage"
 
@@ -18,8 +22,11 @@ out=$(sl '{"rate_limits": {"five_hour": {"used_percentage": 23.5, "resets_at": 2
 ok test "$out" = "plan 24% 5h · 41% week"
 ok grep -qx "five_hour 24 2000000000" "$note"
 ok grep -qx "seven_day 41 2000100000" "$note"
+ok grep -q '"plugin": "ai-usage", "kind": "usage", "title": "Claude plan: 24% 5h, 41% week"' "$t/records"
+sl '{"rate_limits": {"five_hour": {"used_percentage": 30, "resets_at": 2000000000}}}' >/dev/null
+ok test "$(grep -c '"kind": "usage"' "$t/records")" = 1          # 15 minutes before another record
 sl '{"model": {"id": "x"}}' >/dev/null
-ok grep -qx "five_hour 24 2000000000" "$note"     # nothing new: the last note stays
+ok grep -qx "five_hour 30 2000000000" "$note"     # nothing new: the last note stays
 sl 'not json' >/dev/null
 
 mkdir -p "$t/.claude"

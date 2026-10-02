@@ -15,6 +15,11 @@ export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config" XDG_CACHE
 mkdir -p "$t/bin" "$t/config/vikix/plugins/next-meeting" "$t/.local/share/vikix/webapps/teams"
 for p in setsid notify-send; do printf '#!/bin/sh\necho "%s $*" >> %s/calls\n' "$p" "$t" > "$t/bin/$p"; chmod +x "$t/bin/$p"; done
 export PATH="$t/bin:$PATH"
+# vikix records add: a stand-in that keeps what it was given.
+mkdir -p "$t/fakebin"
+printf '#!/bin/sh\ncat >> %s/records\necho >> %s/records\n' "$t" "$t" > "$t/fakebin/vikix"; chmod +x "$t/fakebin/vikix"
+export PATH="$t/fakebin:$PATH"
+
 fail=0
 ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
 
@@ -115,5 +120,6 @@ case $list in *work.ics*|*file://*) echo "FAIL: calendars printed a link"; fail=
 "$here/bin/next-meeting" list | grep -q "Board review" || { echo "FAIL: list"; fail=1; }
 "$here/bin/next-meeting" join
 ok grep -q -- "--user-data-dir=$t/.local/share/vikix/webapps/teams --class=vikix-teams" "$t/calls"
+ok grep -q '"plugin": "next-meeting", "kind": "joined", "key": "[0-9]* Board review", "title": "Board review (work, Teams)"' "$t/records"
 [ "$fail" = 0 ] || echo "titles: $titles"
 exit "$fail"

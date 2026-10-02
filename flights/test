@@ -14,6 +14,10 @@ mkdir -p "$t/bin" "$t/config/vikix/plugins/flights"
 printf '#!/bin/sh\necho "notify $*" >> %s/calls\n' "$t" > "$t/bin/notify-send"; chmod +x "$t/bin/notify-send"
 export PATH="$t/bin:$PATH"
 printf 'currency = AED\nhome = DXB\n' > "$t/config/vikix/plugins/flights/settings"
+# vikix records add: a stand-in that keeps what it was given.
+mkdir -p "$t/fakebin"
+printf '#!/bin/sh\ncat >> %s/records\necho >> %s/records\n' "$t" "$t" > "$t/fakebin/vikix"; chmod +x "$t/fakebin/vikix"
+export PATH="$t/fakebin:$PATH"
 fail=0
 ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
 fl() { python3 "$here/lib/flights.py" "$@"; }
@@ -62,6 +66,9 @@ ok grep -q 'cheapest AED 1295' "$t/out"
 ok grep -q 'Emirates  \[quickest\]' "$t/out"
 ok grep -qF 'https://www.google.com/travel/flights/search?tfs=x' "$t/out"
 
+ok grep -q '"plugin": "flights", "kind": "search", "key": "DXB LHR [0-9-]* AED", "title": "DXB → LHR, [A-Za-z]* 12 Nov: from AED 1295, direct AED 3500"' "$t/records"
+fl DXB LHR 12 Nov >/dev/null
+ok test "$(grep -c '"kind": "search"' "$t/records")" = 2           # the same key: the store updates it
 fl watch DXB LHR 12 Nov >/dev/null
 fl watch "LHR 3 Jan" >/dev/null
 ok test "$(grep -c -v '^#' "$t/config/vikix/plugins/flights/watched")" = 2
@@ -72,6 +79,7 @@ sed -i 's/"price": 1295/"price": 1100/' "$t/fake.json"
 fl check >/dev/null
 ok grep -q "notify -a Vikix A flight is cheaper DXB → LHR.*AED 1100 (was 1295)" "$t/calls"
 ok grep -q "AED 1100" "$t/state/vikix/flights-drops"
+ok test "$(grep -c '"kind": "price"' "$t/records")" -ge 3          # a price point at each check
 fl unwatch 2 >/dev/null
 ok test "$(grep -c -v '^#' "$t/config/vikix/plugins/flights/watched")" = 1
 echo "DXB LHR 2001-01-01" >> "$t/config/vikix/plugins/flights/watched"
