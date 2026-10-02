@@ -1,0 +1,10 @@
+#!/bin/sh
+# setup — a Python of its own for flights, with fast-flights at a pinned
+# version (and typing_extensions, which it needs but doesn't declare).
+set -eu
+env="${XDG_DATA_HOME:-$HOME/.local/share}/vikix/plugin-envs/flights"
+uv=$(command -v uv || echo "$HOME/.local/bin/uv")
+[ -x "$uv" ] || { echo "flights: needs uv (Vikix installs it)" >&2; exit 1; }
+"$uv" venv -q --allow-existing "$env"
+VIRTUAL_ENV="$env" "$uv" pip install -q "fast-flights==3.1.0" "typing_extensions>=4"
+echo "   flights is ready: Super+Alt+f, or flights \"DXB LHR 12 Nov\" in a terminal (set your currency and home airport in ~/.config/vikix/plugins/flights/settings)"

@@ -1,0 +1,5 @@
+# Settings for the flights plugin (yours; Vikix never overwrites this file).
+# The currency prices are shown in: AED, EUR, GBP, USD ...
+currency = USD
+# Your home airport: then "LHR 12 Nov" searches from it.
+home =

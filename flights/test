@@ -1,0 +1,80 @@
+#!/bin/sh
+# flights' own test (tests/check.sh runs it), offline: results come from a
+# file (FLIGHTS_FAKE), never the network. The line is read right (airports,
+# dates, a round trip, business, direct, adults, the home airport); results
+# show cheapest first, the quickest marked, and the Google Flights link;
+# watching remembers the cheapest, a drop is notified and noted for the
+# bar, a route whose date has passed stops being watched.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+export HOME="$t" XDG_STATE_HOME="$t/state" XDG_CONFIG_HOME="$t/config" FLIGHTS_FAKE="$t/fake.json"
+mkdir -p "$t/bin" "$t/config/vikix/plugins/flights"
+printf '#!/bin/sh\necho "notify $*" >> %s/calls\n' "$t" > "$t/bin/notify-send"; chmod +x "$t/bin/notify-send"
+export PATH="$t/bin:$PATH"
+printf 'currency = AED\nhome = DXB\n' > "$t/config/vikix/plugins/flights/settings"
+fail=0
+ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+fl() { python3 "$here/lib/flights.py" "$@"; }
+
+python3 - "$here/lib" <<'PY' || fail=1
+import sys
+sys.path.insert(0, sys.argv[1])
+import flights as F
+from datetime import date
+bad = 0
+def want(line, **kw):
+    global bad
+    q = F.parse(line, "DXB")
+    for k, v in kw.items():
+        if q[k] != v:
+            print(f"FAIL: {line!r}: {k} is {q[k]!r}, not {v!r}"); bad = 1
+want("DXB LHR 12 Nov, back 20th", **{"from": "DXB", "to": "LHR"})
+q = F.parse("DXB LHR 12 Nov, back 20th")
+if (q["out"].month, q["out"].day, q["back"].month, q["back"].day) != (11, 12, 11, 20):
+    print("FAIL: the dates of a round trip"); bad = 1
+want("lhr jfk 3 dec business", seat="business")
+want("dxb bey 5 Jan direct 2 adults", direct=True, adults=2)
+want("12 Nov DXB to LHR", **{"from": "DXB", "to": "LHR"})
+want("LHR 12 Nov", **{"from": "DXB", "to": "LHR"})
+q = F.parse("DXB LHR 30 Dec back 4th")
+if (q["back"] - q["out"]).days != 5:
+    print("FAIL: back 4th, after 30 Dec, is in January"); bad = 1
+if F.parse("DXB LHR 3 Jan")["out"] < date.today():
+    print("FAIL: a date already past this year means next year"); bad = 1
+for line in ("12 Nov", "DXB LHR"):
+    try:
+        F.parse(line); print(f"FAIL: {line!r} should be refused"); bad = 1
+    except F.Problem:
+        pass
+sys.exit(bad)
+PY
+
+cat > "$t/fake.json" <<'JSON'
+{"link": "https://www.google.com/travel/flights/search?tfs=x",
+ "flights": [
+  {"price": 1295, "airlines": ["EgyptAir"], "depart": "10:40", "arrive": "21:00", "arrive_day": 0, "stops": 1, "via": ["CAI"], "minutes": 860},
+  {"price": 3500, "airlines": ["Emirates"], "depart": "16:05", "arrive": "20:00", "arrive_day": 0, "stops": 0, "via": [], "minutes": 475}]}
+JSON
+fl DXB LHR 12 Nov > "$t/out"
+ok grep -q 'cheapest AED 1295' "$t/out"
+ok grep -q 'Emirates  \[quickest\]' "$t/out"
+ok grep -qF 'https://www.google.com/travel/flights/search?tfs=x' "$t/out"
+
+fl watch DXB LHR 12 Nov >/dev/null
+fl watch "LHR 3 Jan" >/dev/null
+ok test "$(grep -c -v '^#' "$t/config/vikix/plugins/flights/watched")" = 2
+fl check >/dev/null
+fl watching > "$t/out"
+ok grep -q 'cheapest AED 1295' "$t/out"
+sed -i 's/"price": 1295/"price": 1100/' "$t/fake.json"
+fl check >/dev/null
+ok grep -q "notify -a Vikix A flight is cheaper DXB → LHR.*AED 1100 (was 1295)" "$t/calls"
+ok grep -q "AED 1100" "$t/state/vikix/flights-drops"
+fl unwatch 2 >/dev/null
+ok test "$(grep -c -v '^#' "$t/config/vikix/plugins/flights/watched")" = 1
+echo "DXB LHR 2001-01-01" >> "$t/config/vikix/plugins/flights/watched"
+fl check >/dev/null
+ok sh -c "! grep -q 2001 '$t/config/vikix/plugins/flights/watched'"
+exit "$fail"

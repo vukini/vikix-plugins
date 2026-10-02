@@ -1,0 +1,7 @@
+#!/bin/sh
+# remove — its Python and its notes; your settings and watched routes stay.
+set -eu
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/vikix/plugin-envs/flights" \
+       "${XDG_STATE_HOME:-$HOME/.local/state}/vikix/flights" \
+       "${XDG_STATE_HOME:-$HOME/.local/state}/vikix/flights-drops"
+echo "   removed flights' Python; your settings and watched routes stay in ~/.config/vikix/plugins/flights"

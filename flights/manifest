@@ -1,0 +1,9 @@
+name: flights
+about: Search flights from a line ("DXB LHR 12 Nov, back 20th"), cheapest and quickest in a list, opened on Google Flights to book there; watch routes for a cheaper price; Super+Alt+f
+kinds: bar key menu service
+vikix: 0.71.44
+lisp: plugin.lisp
+setup: setup
+remove: remove
+service: flights daemon
+changes: makes a Python of its own in ~/.local/share/vikix/plugin-envs/flights with fast-flights 3.1.0 (an unofficial Google Flights reader) from PyPI, through uv; searches go to Google Flights; it never books anything

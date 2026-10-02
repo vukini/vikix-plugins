@@ -1,0 +1,7 @@
+#!/bin/sh
+# flights — search flights, and watch routes for a cheaper price (flights --help).
+# The plugin's setup made a Python of its own for it, with fast-flights in it.
+env="${XDG_DATA_HOME:-$HOME/.local/share}/vikix/plugin-envs/flights"
+here=$(dirname "$(readlink -f "$0")")
+[ -x "$env/bin/python" ] || { echo "flights: its Python isn't there: vikix plugin add flights sets it up" >&2; exit 1; }
+exec "$env/bin/python" "$here/../lib/flights.py" "$@"
