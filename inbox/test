@@ -41,9 +41,9 @@ ok test -z "$(ls "$t/run")"           # the box's file doesn't stay behind
 
 # The Emacs box, in a batch Emacs.
 if command -v emacs >/dev/null; then
-  box() {   # box TEXT FINISH: what bin/inbox hands Emacs, then typing and C-c C-c or C-c C-k
+  box() {   # box TEXT FINISH [ELISP]: what bin/inbox hands Emacs, then typing and C-c C-c or C-c C-k
     printf '{"file": "%s", "source": "Board review (Teams)", "quote": "#+ a line\\nsecond", "created": "[2026-10-02 Fri 21:00]"}' "$inbox" > "$t/run/ask.json"
-    emacs --batch -Q -l "$here/lib/inbox.el" --eval "(progn (vikix-inbox-capture \"$t/run/ask.json\") (insert \"$1\") ($2))" >/dev/null 2>&1
+    emacs --batch -Q -l "$here/lib/inbox.el" --eval "(progn ${3:-} (vikix-inbox-capture \"$t/run/ask.json\") (insert \"$1\") ($2))" 2>/dev/null
   }
   box 'Follow up with Lee\nabout the budget' org-capture-finalize
   ok grep -qx '\* Follow up with Lee' "$inbox"
@@ -52,6 +52,12 @@ if command -v emacs >/dev/null; then
   ok grep -qx ',#+ a line' "$inbox"
   ok grep -qx 'about the budget' "$inbox"
   ok test ! -e "$t/run/ask.json"
+  # A config that opens every file read-only (as Vid's does): the note
+  # still lands, saved, and no buffer of the inbox is left open.
+  box 'Read only is fine' "progn (org-capture-finalize) (princ (length (seq-filter (function buffer-file-name) (buffer-list))))" \
+    "(add-hook 'find-file-hook (lambda () (read-only-mode 1)))" > "$t/left"
+  ok grep -qx '\* Read only is fine' "$inbox"
+  ok test "$(cat "$t/left")" = 0
   before=$(cat "$inbox")
   box 'Never mind' org-capture-kill
   ok test "$(cat "$inbox")" = "$before"

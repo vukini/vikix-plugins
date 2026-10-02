@@ -19,6 +19,9 @@
 
 (defvar vikix-inbox--closing nil)
 
+(defvar vikix-inbox--target nil
+  "The inbox's buffer during a capture: (BUFFER OPENED-BY-US . WAS-READ-ONLY).")
+
 (defun vikix-inbox--read (ask)
   (prog1 (with-temp-buffer
            (insert-file-contents ask)
@@ -30,17 +33,40 @@
   (replace-regexp-in-string "^\\(,*\\(?:\\*\\|#\\+\\)\\)" ",\\1" text))
 
 (defun vikix-inbox-capture (ask)
-  "Open a capture of a note into the inbox, as the file ASK describes."
+  "Open a capture of a note into the inbox, as the file ASK describes.
+On any failure no box is left half made: the frame goes (bin/inbox then
+offers rofi's), and the inbox's buffer is as it was."
+  (condition-case err
+      (vikix-inbox--capture ask)
+    (error
+     (vikix-inbox--restore)
+     (let ((vikix-inbox--closing t))
+       (when (equal (frame-parameter nil 'name) vikix-inbox-frame)
+         (delete-frame)))
+     (signal (car err) (cdr err)))))
+
+(defun vikix-inbox--capture (ask)
   (let* ((info (vikix-inbox--read ask))
          (file (alist-get 'file info))
          (quote (string-trim (or (alist-get 'quote info) ""))))
     (make-directory (file-name-directory file) t)
     (unless (and (file-exists-p file) (> (file-attribute-size (file-attributes file)) 0))
       (with-temp-file file (insert "#+title: Inbox\n\n")))
-    (let ((org-capture-templates `(("i" "Inbox" entry (file ,file) "* %?"
-                                    ;; Not left open: the phones change the file
-                                    ;; too, through Dropbox.
-                                    :kill-buffer t))))
+    ;; The inbox's buffer, writable for the note: some configs open every
+    ;; file read-only (a find-file-hook, view-read-only). Put back as it
+    ;; was after; closed again when it wasn't open before, since the phones
+    ;; change the file too, through Dropbox.
+    (let* ((open (find-buffer-visiting file))
+           (buf (or open (find-file-noselect file))))
+      (with-current-buffer buf
+        ;; Open from before, and the file changed since (a phone, inbox add):
+        ;; read it again, or the note would be added to the old text.
+        (when (and open (not (buffer-modified-p)) (not (verify-visited-file-modtime buf)))
+          (let ((inhibit-read-only t)) (revert-buffer t t t)))
+        (setq vikix-inbox--target (cons buf (cons (not open) buffer-read-only)))
+        (when (bound-and-true-p view-mode) (view-mode -1))
+        (setq buffer-read-only nil)))
+    (let ((org-capture-templates `(("i" "Inbox" entry (file ,file) "* %?"))))
       (org-capture nil "i"))
     ;; Capture splits the window it's in; this frame is the note's alone.
     (delete-other-windows)
@@ -72,8 +98,22 @@
         (when (and src (not (string-empty-p src)))
           (org-entry-put (point) "SOURCE" src))))))
 
+(defun vikix-inbox--restore ()
+  "The inbox's buffer as it was before the note: closed, or read-only again."
+  (pcase vikix-inbox--target
+    (`(,buf ,opened . ,was-read-only)
+     (setq vikix-inbox--target nil)
+     (when (buffer-live-p buf)
+       ;; Kept on disk at once, for the phones (a dropped note left it as it was).
+       (when (buffer-modified-p buf)
+         (with-current-buffer buf (save-buffer)))
+       (if opened
+           (kill-buffer buf)
+         (with-current-buffer buf (setq buffer-read-only was-read-only)))))))
+
 (defun vikix-inbox--close ()
-  "After the note is kept or dropped: the frame goes."
+  "After the note is kept or dropped: the inbox's buffer as it was, and the frame goes."
+  (vikix-inbox--restore)
   (let ((frame (selected-frame)))
     (when (and (not vikix-inbox--closing)
                (equal (frame-parameter frame 'name) vikix-inbox-frame))
