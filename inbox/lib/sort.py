@@ -3,7 +3,7 @@
   inbox sort            a model suggests, for each note in the inbox, which
                         of your Org files (and which heading in it) it
                         belongs in, and whether it's a to-do; you see the
-                        list and change what you like; then the notes move
+                        list and change what you like (or delete one); then the notes move
                         and, when you say so, the to-dos go to Todoist
   inbox sort --undo     the files as they were before the last sort (when
                         nothing has changed them since)
@@ -24,13 +24,13 @@ vikix ai key set todoist (Todoist: Settings, Integrations, Developer).
 A to-do sent gets TODO in front of its title and a TODOIST property with
 the task's link.
 """
+import datetime
 import hashlib
 import json
 import os
 import re
 import shutil
 import sys
-import time
 import urllib.error
 import urllib.request
 from typing import NoReturn
@@ -316,8 +316,9 @@ def digest(path):
 
 
 def keep_copies(paths):
-    folder = os.path.join(SORTS, time.strftime("%Y%m%d-%H%M%S"))
-    os.makedirs(folder, mode=0o700, exist_ok=True)
+    # To the microsecond: two sorts in one second (a script, a test) each keep their own.
+    folder = os.path.join(SORTS, datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+    os.makedirs(folder, mode=0o700)
     before = {}
     for i, p in enumerate(paths):
         if os.path.exists(p):
@@ -360,12 +361,15 @@ def undo():
 
 # --- The sort -------------------------------------------------------------------------------
 
-def show(entries, plan, dests):
+def show(entries, plan, dests, deleted=()):
     width = min(44, max(len(title_of(e)) for e in entries))
     for i, (e, (p, todo)) in enumerate(zip(entries, plan), 1):
         t = title_of(e)
         t = t if len(t) <= width else t[:width - 1] + "…"
-        print(f"  {i:>2}  {t:<{width}}  → {label(dests[p - 1] if p else None)}{'   to-do' if todo else ''}")
+        if i - 1 in deleted:
+            print(f"  {i:>2}  {t:<{width}}  ✗ deleted")
+        else:
+            print(f"  {i:>2}  {t:<{width}}  → {label(dests[p - 1] if p else None)}{'   to-do' if todo else ''}")
 
 
 def choose_place(dests, current):
@@ -408,10 +412,12 @@ def main(argv):
     answer = (ask_claude if kind == "claude" else ask_local)(model, prompt(dests, entries))
     plan = suggestions(answer, len(entries), len(dests))
 
+    deleted = set()
     while True:
         print()
-        show(entries, plan, dests)
-        print("\nEnter: do it    N: change where note N goes    t N: to-do or not    q: stop, nothing moves")
+        show(entries, plan, dests, deleted)
+        print("\nEnter: do it    N: change where note N goes    t N: to-do or not    d N: delete or keep\n"
+              "q: stop, nothing moves")
         try:
             a = input("> ").strip().lower()
         except EOFError:
@@ -421,6 +427,10 @@ def main(argv):
         if a == "q":
             print("Nothing moved.")
             return
+        m = re.fullmatch(r"d\s*(\d+)", a)
+        if m and 1 <= int(m.group(1)) <= len(entries):
+            deleted ^= {int(m.group(1)) - 1}       # d again keeps it
+            continue
         m = re.fullmatch(r"t\s*(\d+)", a)
         if m and 1 <= int(m.group(1)) <= len(entries):
             i = int(m.group(1)) - 1
@@ -430,8 +440,9 @@ def main(argv):
             p = choose_place(dests, label(dests[plan[i][0] - 1] if plan[i][0] else None))
             if p is not None:
                 plan[i] = (p, plan[i][1])
+                deleted.discard(i)
 
-    todos = [i for i, (_, todo) in enumerate(plan) if todo]
+    todos = [i for i, (_, todo) in enumerate(plan) if todo and i not in deleted]
     links = {}
     if todos:
         token = secret("TODOIST_API_KEY")
@@ -454,6 +465,8 @@ def main(argv):
     # The files after: each note in its place, the inbox without the notes that left.
     texts, stay = {}, []
     for i, (e, (p, todo)) in enumerate(zip(entries, plan)):
+        if i in deleted:
+            continue
         if todo:
             e = as_todo(e)
         if i in links:
@@ -476,8 +489,9 @@ def main(argv):
         write(path, t)
     with open(os.path.join(keep, "sort.json"), "w") as f:
         json.dump({"before": before, "after": {p: digest(p) for p in texts}, "todoist": len(links)}, f, indent=1)
-    moved = sum(1 for p, _ in plan if p)
-    print(f"\nMoved {moved} note(s); {len(stay)} left in the inbox. (inbox sort --undo puts it all back.)")
+    moved = sum(1 for i, (p, _) in enumerate(plan) if p and i not in deleted)
+    gone = f", deleted {len(deleted)}" if deleted else ""
+    print(f"\nMoved {moved} note(s){gone}; {len(stay)} left in the inbox. (inbox sort --undo puts it all back.)")
 
 
 if __name__ == "__main__":

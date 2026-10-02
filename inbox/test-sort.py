@@ -115,11 +115,25 @@ ok(read("inbox.org") == three and "Nothing moved" in r.stdout, "q moves nothing"
 r = sort("3\n6\nt 3\n\n")
 ok("* TODO random\n" in read("work.org"), "a note moved by hand, made a to-do by hand")
 
+# d N deletes a note (d again keeps it); --undo brings it back.
+open(inbox, "w").write(three)
+answer = {"notes": [{"note": 1, "place": 1, "todo": True}, {"note": 2, "place": 0, "todo": False},
+                    {"note": 3, "place": 0, "todo": False}]}
+before_personal = read("personal.org")
+r = sort("d 1\nd 3\nd 3\n\n")
+ok("✗ deleted" in r.stdout and "deleted 1" in r.stdout, f"d N shows and counts a deletion: {r.stdout}")
+ok("Call the bank" not in read("inbox.org") and read("personal.org") == before_personal, "a deleted note goes nowhere")
+ok("* random\n" in read("inbox.org") and "* Vikix idea: themes\n" in read("inbox.org"), "d twice keeps it")
+ok("vikix ai key set todoist" not in r.stdout, "a deleted to-do isn't a to-do")
+sort("", "--undo")
+ok(read("inbox.org") == three, "--undo brings a deleted note back")
+r = sort("3\n6\nt 3\n\n")      # again, for the next check
+
 # --undo refuses when a file changed since.
-with open(os.path.join(notes, "work.org"), "a") as f:
+with open(inbox, "a") as f:
     f.write("* written later\n")
 r = sort("", "--undo")
-ok(r.returncode != 0 and "changed since the sort" in r.stderr, "--undo leaves a file changed since alone")
+ok(r.returncode != 0 and "changed since the sort" in r.stderr, f"--undo leaves a file changed since alone: {r.stdout} {r.stderr}")
 
 # Claude, its key from the secrets folder; Todoist's token from the environment.
 open(inbox, "w").write("#+title: Inbox\n\n* Book the dentist\n")
