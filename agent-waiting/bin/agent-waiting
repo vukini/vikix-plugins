@@ -1,0 +1,37 @@
+#!/bin/sh
+# agent-waiting — what Claude Code's hooks call (the plugin's setup adds
+# them): it notes, by its terminal window, that the session there asks
+# something (a permission, a question) or has finished, or neither.
+#
+#   agent-waiting ask     Notification: Claude wants you (an idle "waiting
+#                         for your input" counts as done, not as asking)
+#   agent-waiting done    Stop: it finished, and waits for your next word
+#   agent-waiting clear   UserPromptSubmit: you answered
+#
+# One file a window in ~/.local/state/vikix/agents/, named by the X window
+# id the terminal gives its programs; StumpWM's side (plugin.lisp) reads
+# them for the bar and clears one when you look at its window. Quick and
+# quiet: a hook that is slow or prints holds Claude up.
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/vikix/agents"
+win=${ALACRITTY_WINDOW_ID:-${WINDOWID:-}}
+case $win in ''|*[!0-9]*) cat >/dev/null 2>&1; exit 0 ;; esac   # not in a terminal window: nothing to point at
+what=${1:-}
+input=$(cat 2>/dev/null)
+
+case $what in
+  ask)
+    case $input in *"waiting for your input"*) what="done" ;; esac ;;
+  done|clear) ;;
+  *) exit 0 ;;
+esac
+mkdir -p "$state" 2>/dev/null || exit 0
+if [ "$what" = clear ]; then
+  rm -f "$state/$win"
+else
+  # Asking stays asking until answered: a later "done" from the same
+  # turn doesn't hide it.
+  if [ "$what" = "done" ] && [ "$(cut -d' ' -f1 "$state/$win" 2>/dev/null)" = ask ]; then exit 0; fi
+  printf '%s %s\n' "$what" "$(date +%s)" > "$state/$win.new" && mv -f "$state/$win.new" "$state/$win"
+fi
+exit 0

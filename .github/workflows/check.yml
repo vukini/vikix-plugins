@@ -1,0 +1,11 @@
+name: check
+on: [push, pull_request]
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: sbcl and shellcheck
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends sbcl shellcheck
+      - name: every plugin well made
+        run: tests/check.sh

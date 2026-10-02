@@ -1,0 +1,8 @@
+name: agent-waiting
+about: The bar says when a Claude Code session in another window waits for you; Super+Alt+w goes there
+kinds: bar key menu
+vikix: 0.71.41
+lisp: plugin.lisp
+setup: setup
+remove: remove
+changes: adds three hooks to ~/.claude/settings.json (Notification, Stop, UserPromptSubmit), each running agent-waiting; remove takes them out again

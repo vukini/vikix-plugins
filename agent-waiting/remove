@@ -1,0 +1,34 @@
+#!/bin/sh
+# remove — take agent-waiting's hooks out of ~/.claude/settings.json again
+# (a copy is kept first), and its notes.
+set -eu
+settings="$HOME/.claude/settings.json"
+if [ -e "$settings" ]; then
+  cp -p "$settings" "$settings.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$settings" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+with open(path) as f:
+    settings = json.load(f)
+hooks = settings.get("hooks", {})
+for event in list(hooks):
+    groups = []
+    for g in hooks[event]:
+        g["hooks"] = [h for h in g.get("hooks", []) if "agent-waiting" not in h.get("command", "")]
+        if g["hooks"]:
+            groups.append(g)
+    if groups:
+        hooks[event] = groups
+    else:
+        del hooks[event]
+if not hooks:
+    settings.pop("hooks", None)
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+fi
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/vikix/agents"
+echo "   took agent-waiting's hooks out of Claude Code's settings"

@@ -1,0 +1,40 @@
+#!/bin/sh
+# agent-waiting's own test (tests/check.sh runs it): the hook command notes
+# ask, done and clear by window, an idle "waiting for your input" is done,
+# a done doesn't hide an ask, and outside a terminal window it does
+# nothing; setup adds the three hooks once, keeping what was there, and
+# remove takes only them out.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+export HOME="$t" XDG_STATE_HOME="$t/state"
+unset WINDOWID
+fail=0
+ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
+aw() { echo "${2:-{\}}" | ALACRITTY_WINDOW_ID=${3:-42} "$here/bin/agent-waiting" "$1"; }
+note() { cut -d' ' -f1 "$t/state/vikix/agents/${1:-42}" 2>/dev/null; }
+
+aw ask '{"message": "Claude needs your permission to use Bash"}'
+ok test "$(note)" = ask
+aw "done"
+ok test "$(note)" = ask                 # a done doesn't hide an ask
+aw clear
+ok test ! -e "$t/state/vikix/agents/42"
+aw ask '{"message": "Claude is waiting for your input"}' 43
+ok test "$(note 43)" = "done"             # idle is done, not asking
+echo '{}' | env -u ALACRITTY_WINDOW_ID "$here/bin/agent-waiting" ask
+ok test "$(ls "$t/state/vikix/agents" | wc -l)" = 1   # no terminal window: nothing
+
+mkdir -p "$t/.claude"
+echo '{"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}' > "$t/.claude/settings.json"
+"$here/setup" >/dev/null; "$here/setup" >/dev/null
+s=$(cat "$t/.claude/settings.json")
+ok test "$(printf '%s' "$s" | grep -c 'agent-waiting')" = 3
+ok grep -q '"mine"' "$t/.claude/settings.json"
+ok grep -q '"theme": "dark"' "$t/.claude/settings.json"
+"$here/remove" >/dev/null
+ok test "$(grep -c 'agent-waiting' "$t/.claude/settings.json")" = 0
+ok grep -q '"mine"' "$t/.claude/settings.json"
+ok test ! -e "$t/state/vikix/agents"
+exit "$fail"

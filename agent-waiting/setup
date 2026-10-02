@@ -1,0 +1,29 @@
+#!/bin/sh
+# setup — add the hooks that tell agent-waiting what Claude Code is doing,
+# to your ~/.claude/settings.json (a copy of it is kept first, beside it).
+# Safe to run twice: a hook that's there already isn't added again.
+set -eu
+settings="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -e "$settings" ] && cp -p "$settings" "$settings.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+python3 - "$settings" "$HOME/.local/bin/agent-waiting" <<'PY'
+import json, os, sys
+path, command = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except FileNotFoundError:
+    settings = {}
+hooks = settings.setdefault("hooks", {})
+for event, what in (("Notification", "ask"), ("Stop", "done"), ("UserPromptSubmit", "clear")):
+    groups = hooks.setdefault(event, [])
+    line = f"{command} {what}"
+    if not any(h.get("command") == line for g in groups for h in g.get("hooks", [])):
+        groups.append({"hooks": [{"type": "command", "command": line}]})
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+echo "   added Claude Code's hooks for agent-waiting (new sessions use them; running ones after a restart)"
