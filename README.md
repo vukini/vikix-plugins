@@ -14,6 +14,8 @@ Vikix uses this repository at a pinned commit, one it has checked: an update can
 
 ## The plugins
 
+A guide to each one (what it does, adding it, its keys and settings, where it keeps things, what to do when it doesn't work) is in Vikix's guide: [Plugins, one by one](https://github.com/vukini/vikix/blob/main/docs/plugins.md), also on your machine (Super+m, *Vikix guide*).
+
 | Plugin | What it does |
 |---|---|
 | [agent-waiting](agent-waiting/) | The bar says `agent asks` when a Claude Code session in another window waits for your answer, and `agents done N` when sessions have finished; Super+Alt+w goes to the window |
