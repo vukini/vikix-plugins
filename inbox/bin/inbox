@@ -13,6 +13,11 @@
                        suggesting, you choosing, and to-dos to Todoist
                        (Super+Alt+Shift+s, or the menu: in a terminal)
   inbox sort --undo    put back the files as they were before the last sort
+  inbox sync           your notes up to Dropbox: starts it if it isn't
+                       running, takes the notes folder back in if this
+                       laptop's sync left it out, and waits until it's up
+                       to date (notes-sync is the same; --notify for a
+                       notification too)
   inbox open           the inbox in Emacs
   inbox file           where the inbox is
 
@@ -162,6 +167,55 @@ def box(with_quote):
         rofi_box(src, quote, url)
 
 
+def dropbox(*args, timeout=10):
+    try:
+        r = subprocess.run(["dropbox", *args], capture_output=True, text=True, timeout=timeout)
+        return (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def sync(notify_too):
+    """Your notes up to Dropbox: start it if it isn't running, make sure the
+    notes folder isn't left out, and wait until it says up to date."""
+    def say(text):
+        print(text, flush=True)
+        if notify_too:
+            notify(text)
+    if not shutil.which("dropbox"):
+        sys.exit("inbox sync: Dropbox isn't installed (vikix add dropbox)")
+    folder = os.path.dirname(inbox_file())
+    home_dropbox = os.path.join(HOME, "Dropbox") + os.sep
+    if not (folder + os.sep).startswith(home_dropbox):
+        sys.exit(f"inbox sync: the notes ({folder}) aren't in ~/Dropbox")
+    if "isn't running" in dropbox("status"):
+        say("Starting Dropbox…")
+        dropbox("start", timeout=60)
+    # The top folder under ~/Dropbox: that's what selective sync leaves out.
+    top = os.path.join(HOME, "Dropbox", os.path.relpath(folder, home_dropbox).split(os.sep)[0])
+    started, last = time.time(), ""
+    while True:
+        excluded = dropbox("exclude", "list")
+        if "isn't responding" not in excluded and excluded:
+            break
+        if time.time() - started > 600:
+            sys.exit("inbox sync: Dropbox didn't answer in 10 minutes (dropbox status says why)")
+        time.sleep(3)
+    if any(os.path.join(HOME, line.strip()) == top for line in excluded.splitlines()):
+        say(f"{top} was left out of this laptop's sync: taking it back in")
+        dropbox("exclude", "remove", top)
+    while True:
+        state = dropbox("filestatus", folder).rsplit(":", 1)[-1].strip()
+        if state == "up to date":
+            say("Your notes are up to date in Dropbox.")
+            return
+        now = dropbox("status").splitlines()[0] if dropbox("status") else "waiting for Dropbox"
+        if now != last:
+            print(f"  {now}", flush=True)
+            last = now
+        time.sleep(3)
+
+
 def main(argv):
     cmd = argv[0] if argv else "note"
     if cmd == "note":
@@ -190,6 +244,11 @@ def main(argv):
     elif cmd == "sort":
         os.execvp(sys.executable, [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                                                 "..", "lib", "sort.py"), *argv[1:]])
+    elif cmd == "sync":
+        try:
+            sync("--notify" in argv)
+        except KeyboardInterrupt:
+            print("\nStopped waiting; Dropbox carries on by itself.")
     elif cmd == "open":
         path = inbox_file()
         if not os.path.exists(path):

@@ -66,6 +66,29 @@ if command -v emacs >/dev/null; then
   ok grep -qx '\* Note' "$inbox"
 fi
 
+# inbox sync, with a stand-in Dropbox: not running (started), the notes
+# folder left out (taken back), syncing twice, then up to date.
+mkdir -p "$t/dbx" "$t/Dropbox/notes"
+echo "file = $t/Dropbox/notes/inbox.org" > "$t/config/vikix/plugins/inbox/settings"
+cat > "$t/bin/dropbox" <<SH
+#!/bin/sh
+d=$t/dbx
+echo "\$*" >> \$d/calls
+case "\$1" in
+  status) if [ -e \$d/running ]; then echo "Syncing 3 files"; else echo "Dropbox isn't running!"; fi ;;
+  start) touch \$d/running ;;
+  exclude) if [ "\$2" = list ]; then echo "Excluded:"; [ -e \$d/back ] || echo "Dropbox/notes"; else touch \$d/back; fi ;;
+  filestatus) n=\$(cat \$d/n 2>/dev/null || echo 0); echo \$((n+1)) > \$d/n
+              if [ "\$n" -ge 2 ]; then echo "\$2: up to date"; else echo "\$2: syncing"; fi ;;
+esac
+SH
+chmod +x "$t/bin/dropbox"
+out=$(PATH="$t/bin:$here/bin:$PATH" timeout 60 "$here/bin/notes-sync")
+ok grep -q '^start$' "$t/dbx/calls"
+ok grep -qx "exclude remove $t/Dropbox/notes" "$t/dbx/calls"
+case $out in *"up to date in Dropbox"*) ;; *) echo "FAIL: notes-sync said: $out"; fail=1 ;; esac
+echo "file = $inbox" > "$t/config/vikix/plugins/inbox/settings"
+
 # A page's address; the sort, its undo, and Todoist (test-sort.py).
 "$here/bin/inbox" add --url https://docs.voidlinux.org/ "Read about runit" >/dev/null
 ok grep -qx ':URL:      https://docs.voidlinux.org/' "$inbox"

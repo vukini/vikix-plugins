@@ -48,6 +48,10 @@
   ;; Vikix's terminal (*vikix-terminal*, Super+Return's), not $TERMINAL.
   (run-shell-command (format nil "VIKIX_TERMINAL='~a' inbox sort --term" *vikix-terminal*)))
 
+(defcommand inbox-sync () ()
+  "Your notes up to Dropbox: starts it if needed, a notification when they're up to date."
+  (run-shell-command "inbox sync --notify"))
+
 (defcommand inbox-open () ()
   "Your Org inbox, in Emacs."
   (run-shell-command "inbox open"))
@@ -58,3 +62,4 @@
 (vikix-plugin-key "s-M-S" "inbox-sort" "Notes: sort the inbox into your Org files, to-dos to Todoist" "Notes")
 (vikix-plugin-menu "Notes: sort the inbox" '(inbox-sort))
 (vikix-plugin-menu "Notes: open the inbox" '(inbox-open))
+(vikix-plugin-menu "Notes: sync with Dropbox" '(inbox-sync))

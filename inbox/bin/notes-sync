@@ -1,0 +1,3 @@
+#!/bin/sh
+# notes-sync: your notes up to Dropbox (inbox sync).
+exec inbox sync "$@"
