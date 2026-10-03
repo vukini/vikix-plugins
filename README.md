@@ -61,6 +61,8 @@ The `manifest` is lines of `key: value`:
 (vikix-plugin-menu "Agents: go to the waiting one" '(my-command))        ; an entry in Super+m
 ```
 
+A plugin's keys are on Super+Alt (`s-M-w`; `s-M-W`, with Shift, for a second on the same letter): Vikix keeps one rule for keys, where Super+Alt opens everything beyond the six main apps, and `tests/check.sh` fails on a plugin key anywhere else.
+
 A bar function is called at every redraw of the bar (each second or so): it reads what it needs, quickly, and never waits on a program or the network. A timer does the slow work and leaves the result where the function finds it.
 
 ### What it found

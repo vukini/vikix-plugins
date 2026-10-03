@@ -35,6 +35,13 @@ for dir in */; do
     [ -e "$f" ] || continue
     [ -x "$f" ] || bad "$p" "$f isn't executable"
   done
+  # Vikix's rule for keys: a plugin's keys are on Super+Alt (s-M-...).
+  lisp=$(field "$p" lisp)
+  if [ -n "$lisp" ] && [ -f "$p/$lisp" ]; then
+    for k in $(grep -oE '\(vikix-plugin-key +"[^"]+"' "$p/$lisp" | grep -oE '"[^"]+"' | tr -d '"'); do
+      [[ $k =~ ^s-M-([A-Za-z0-9]|F[0-9]{1,2})$ ]] || bad "$p" "its key $k isn't on Super+Alt (s-M- and a letter, digit or F-key)"
+    done
+  fi
   # The Lisp reads: every form, in a package like StumpWM's.
   lisp=$(field "$p" lisp)
   if [ -n "$lisp" ] && command -v sbcl >/dev/null; then
