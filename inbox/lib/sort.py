@@ -47,6 +47,7 @@ ANTHROPIC = os.environ.get("VIKIX_ANTHROPIC_URL", "https://api.anthropic.com")
 TODOIST = os.environ.get("VIKIX_TODOIST_URL", "https://api.todoist.com")
 CLAUDE_DEFAULT = "claude-sonnet-5"     # as Super+i's (Vikix's bin/vikix-ask)
 LOCAL_DEFAULT = "llama3.2:3b"
+NOT_NOTES = {"init.org"}          # beorg's settings, kept in the same folder: no place for notes
 BODY = 600                             # characters of each note the model reads
 
 def die(msg) -> NoReturn:
@@ -173,7 +174,7 @@ def destinations(folder, inbox):
     for name in sorted(os.listdir(folder)):
         path = os.path.join(folder, name)
         if not name.endswith(".org") or name.startswith(".") or not os.path.isfile(path) \
-                or os.path.samefile(path, inbox):
+                or os.path.samefile(path, inbox) or name in NOT_NOTES:
             continue
         out.append((name, None))
         with open(path) as f:

@@ -84,6 +84,7 @@ open(inbox, "w").write(three)
 os.makedirs(conf, exist_ok=True)
 open(os.path.join(conf, "ai"), "w").write("use=local\nmodel=\n")
 
+open(os.path.join(notes, "init.org"), "w").write("#+title: beorg's settings\n* Agenda\n")
 # Places, in order: 1 personal.org, 2 projects.org, 3 projects.org / alpha,
 # 4 projects.org / vikix, 5 someday.org, 6 work.org.
 answer = {"notes": [{"note": 1, "place": 1, "todo": True}, {"note": 2, "place": 4, "todo": False},
@@ -96,6 +97,7 @@ ok("vikix-wt" not in read("projects.org"), "a worktree isn't a project")
 chat = [s for s in seen if s[0] == "/api/chat"][-1][2]
 ok(chat["model"] == "llama3.2:3b", "use=local: the local model")
 ok("4. projects.org / vikix" in chat["messages"][1]["content"], "the model is given the places, numbered")
+ok("init.org" not in chat["messages"][1]["content"], "beorg's init.org is no place for notes")
 ok("on this laptop" in r.stdout, "it says where the notes go")
 ok("* TODO Call the bank\n" in read("personal.org"), "a to-do gets TODO")
 ok("vikix ai key set todoist" in r.stdout, "without a Todoist token: how to add one")
