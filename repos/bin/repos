@@ -9,6 +9,19 @@
   repos pick       the same in rofi; Enter offers what to do with one
                    (push, pull, a terminal there, Magit in Emacs)
   repos fetch      ask GitHub now what's new (watch does it every 30 minutes)
+  repos push [NAME...]
+                   push what needs pushing (commits and tags), every project
+                   or those named: the pinned ones first (Esploro, the
+                   plugins), the one pinning them last, and never a pin
+                   GitHub hasn't got; catching up first when GitHub moved on
+  repos pull [NAME...]
+                   bring in GitHub's new commits (yours put on top of them);
+                   asks over HTTPS, so no passphrase
+  repos ship [NAME...]
+                   push, then vikix update core: the desktop runs what you
+                   pushed (the step after a release)
+  repos update     the whole system: vikix update (Void's packages, then
+                   Vikix, then your tools)
   repos watch      look every 2 minutes, fetch every 30 (started with the
                    desktop while the plugin is added); the bar reads it
 
@@ -48,7 +61,10 @@ def settings():
          # The commands the report suggests; {path} is the project's folder.
          "push": "git -C {path} push --follow-tags",
          "pull": "git -C {path} pull --ff-only",
-         "look": "git -C {path} status"}
+         "look": "git -C {path} status",
+         # PROJECT:FILE: FILE (in the project pinning it) holds the commit
+         # of PROJECT it builds, on a line NAME_COMMIT=<sha>.
+         "pins": "esploro:~/src/vikix/bin/vikix-esploro vikix-plugins:~/src/vikix/bin/vikix-plugin"}
     try:
         with open(SETTINGS) as f:
             for line in f:
@@ -108,9 +124,49 @@ def look(name, path):
     remote_tags = load_tags().get(path)
     local_tags = set((git(path, "tag") or "").split())
     st["tags"] = sorted(local_tags - set(remote_tags)) if remote_tags is not None else []
+    st["pins"] = pins_of(path)
     st["worktrees"] = max(0, len([l for l in (git(path, "worktree", "list", "--porcelain") or "").splitlines()
                                    if l.startswith("worktree ")]) - 1)
     return st
+
+
+PIN_LINE = re.compile(r"_COMMIT=(?:\$\{[A-Z_]+:-)?([0-9a-f]{40})")
+
+
+def pins():
+    """[(pinned project's path, pinning file, the commit)] from the settings."""
+    found = []
+    for item in settings()["pins"].split():
+        name, _, file = item.partition(":")
+        file = os.path.expanduser(file)
+        path = dict((n, p) for n, p in projects()).get(name)
+        try:
+            with open(file) as f:
+                m = next((m for m in map(PIN_LINE.search, f) if m), None)
+        except OSError:
+            continue
+        if path and m:
+            found.append((path, file, m.group(1)))
+    return found
+
+
+def pinner(file):
+    """The project a pinning file is in."""
+    return git(os.path.dirname(file), "rev-parse", "--show-toplevel")
+
+
+def pins_of(path):
+    """What a pinned project's pin says: the commit, how many of the
+    project's commits are past it, and whether GitHub has it."""
+    out = []
+    for pinned, file, sha in pins():
+        if pinned != path:
+            continue
+        past = git(path, "rev-list", "--count", f"{sha}..HEAD")
+        on_github = git(path, "merge-base", "--is-ancestor", sha, "@{u}") is not None
+        out.append({"by": os.path.basename(pinner(file) or file), "commit": sha[:7],
+                    "past": int(past) if past else 0, "on_github": on_github})
+    return out
 
 
 def load_tags():
@@ -201,6 +257,9 @@ def needs(st):
         words.append(f"{st['stashes']} stash{'es' if st['stashes'] > 1 else ''}")
     if not st["upstream"]:
         words.append("no upstream")
+    for pin in st.get("pins", []):
+        if pin["past"]:
+            words.append(f"{pin['past']} past {pin['by']}'s pin")
     return words
 
 
@@ -358,6 +417,137 @@ def cmd_term():
     launch_terminal(root, ["bash", "--rcfile", rc, "-i"], cls="vikix-repos")
 
 
+# --- Pushing and pulling ---------------------------------------------------------
+
+def say(name, text):
+    print(f"== {name}: {text}", flush=True)
+
+
+def catch_up(st):
+    """Bring in GitHub's new commits: a fast-forward, or ours put on top
+    (a rebase) when both moved. Refused, leaving the project as it was, with
+    uncommitted changes, an unpushed release (its tag would be left on the
+    old commit) or a clash. True when it's caught up."""
+    path, name = st["path"], st["name"]
+    if git(path, "merge-base", "--is-ancestor", "HEAD", "@{u}") is not None:
+        if git(path, "merge", "-q", "--ff-only", "@{u}") is None:
+            say(name, "couldn't fast-forward (a changed file in the way?)")
+            return False
+        return True
+    if st["changed"]:
+        say(name, "GitHub has new commits, and there are uncommitted changes: commit them, then again")
+        return False
+    tagged = [t for c in (git(path, "rev-list", "@{u}..HEAD") or "").split()
+              for t in (git(path, "tag", "--points-at", c) or "").split()]
+    if tagged:
+        say(name, f"GitHub has new commits, and this release isn't pushed: {' '.join(tagged)}."
+                  " Ask a session to rebase it onto origin/main and move the tag")
+        return False
+    if git(path, "rebase", "-q", "@{u}") is None:
+        git(path, "rebase", "--abort")
+        say(name, "GitHub's new commits clash with ours; left as it was. Ask a session to rebase and resolve it")
+        return False
+    return True
+
+
+def push_one(st):
+    """git push, commits and tags; catching up and again when GitHub moved
+    on. Runs in this terminal, so the SSH key can ask its passphrase."""
+    path, name = st["path"], st["name"]
+    args = ["git", "-C", path, "push", "--follow-tags", "-q"]
+    if not st["upstream"]:
+        args = ["git", "-C", path, "push", "-q", "-u", "origin", "HEAD"]
+    if subprocess.run(args).returncode != 0:
+        fetch_one(path)
+        if not catch_up(look(name, path)) or subprocess.run(args).returncode != 0:
+            say(name, "not pushed")
+            return False
+    # Tags --follow-tags leaves (one on no pushed commit).
+    remote = subprocess.run(["git", "-C", path, "ls-remote", "--tags", "origin"],
+                            capture_output=True, text=True).stdout
+    have = {l.split("refs/tags/")[1].removesuffix("^{}") for l in remote.splitlines() if "refs/tags/" in l}
+    missing = sorted(set((git(path, "tag") or "").split()) - have)
+    if missing and subprocess.run(["git", "-C", path, "push", "-q", "origin", *missing]).returncode != 0:
+        say(name, f"tags not pushed: {' '.join(missing)}")
+        return False
+    fetch_one(path)
+    left = git(path, "rev-list", "--count", "@{u}..HEAD")
+    if left and int(left):
+        say(name, f"still {left} ahead of GitHub")
+        return False
+    say(name, "pushed: " + (git(path, "log", "-1", "--format=%h %s") or "")[:60])
+    return True
+
+
+def chosen(names):
+    """The projects named (all when none), or an error naming the unknown."""
+    found = projects()
+    if not names:
+        return found
+    known = dict(found)
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        sys.exit(f"repos: no project {', '.join(unknown)} (repos lists them)")
+    return [(n, known[n]) for n in names]
+
+
+def push_order(found):
+    """Pinned projects first, the ones pinning them last: Vikix may only
+    reach GitHub pointing at commits GitHub already has."""
+    pinned = {p for p, _, _ in pins()}
+    pinning = {pinner(f) for _, f, _ in pins()}
+    rank = lambda item: 0 if item[1] in pinned else 2 if item[1] in pinning else 1
+    return sorted(found, key=rank)
+
+
+def cmd_push(names):
+    ok = True
+    for name, path in push_order(chosen(names)):
+        st = look(name, path)
+        # Not git(): it strips the first line's leading space, which is part of its format.
+        status = subprocess.run(["git", "-C", path, "status", "--porcelain"], capture_output=True, text=True).stdout
+        for line in status.splitlines():
+            if not line.startswith("??"):
+                print(f"   {name}: not committed: {line[3:]}")
+        if not (st["ahead"] or st["tags"] or not st["upstream"]):
+            continue
+        # A pin GitHub hasn't got would break every install that updates.
+        stuck = []
+        for pinned, file, sha in pins():
+            if pinner(file) == path:
+                fetch_one(pinned)
+                if git(pinned, "merge-base", "--is-ancestor", sha, "@{u}") is None:
+                    stuck.append(f"{os.path.basename(pinned)} {sha[:7]}")
+        if stuck:
+            say(name, f"not pushed: it pins {', '.join(stuck)}, which GitHub hasn't got."
+                      f" repos push {' '.join(s.split()[0] for s in stuck)} first")
+            ok = False
+            continue
+        ok = push_one(st) and ok
+    look_all()
+    if ok:
+        print("Everything named is on GitHub.")
+    return ok
+
+
+def cmd_pull(names):
+    ok = True
+    for name, path in chosen(names):
+        if not fetch_one(path):
+            say(name, "couldn't ask GitHub")
+            ok = False
+            continue
+        st = look(name, path)
+        if not st["upstream"] or not st["behind"]:
+            continue
+        if catch_up(st):
+            say(name, f"caught up: {st['behind']} new from GitHub")
+        else:
+            ok = False
+    look_all()
+    return ok
+
+
 def cmd_watch():
     last_fetch = 0
     while True:
@@ -386,6 +576,16 @@ def main(argv):
         cmd_list()
     elif cmd == "watch":
         cmd_watch()
+    elif cmd == "push":
+        sys.exit(0 if cmd_push(argv[1:]) else 1)
+    elif cmd == "pull":
+        sys.exit(0 if cmd_pull(argv[1:]) else 1)
+    elif cmd == "ship":
+        if not cmd_push(argv[1:]):
+            sys.exit("repos: not everything is pushed, so the desktop isn't updated")
+        os.execvp("vikix", ["vikix", "update", "core"])
+    elif cmd == "update":
+        os.execvp("vikix", ["vikix", "update"])
     else:
         print(__doc__.strip())
 

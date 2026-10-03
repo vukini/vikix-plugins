@@ -7,3 +7,7 @@ extra = ~/.emacs.d ~/.dotfiles
 skip =
 # The terminal it opens: Vikix's own (Super+Return's) unless you name one.
 # terminal = kitty
+# Projects another one pins (PROJECT:FILE, FILE holding a NAME_COMMIT=<sha>
+# line): repos says when one is past its pin, and repos push pushes it
+# before the project pinning it.
+# pins = esploro:~/src/vikix/bin/vikix-esploro vikix-plugins:~/src/vikix/bin/vikix-plugin

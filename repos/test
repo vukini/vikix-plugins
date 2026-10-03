@@ -59,4 +59,35 @@ ok grep -q '^repos report$' "$rc"
 ok test "$(grep -c '^history -s' "$rc")" = 4
 # The first suggested is pushed into the history last: Up brings it first.
 ok test "$(grep '^history -s' "$rc" | tail -1)" = 'history -s "gpush ~/src/ahead"'
+
+# --- Pins, push and pull: a library pinned by an app, both with local remotes.
+new lib; new app
+mkdir -p "$t/src/app/bin"
+printf 'push = git -C {path} push --follow-tags\npins = lib:%s/src/app/bin/app-lib\n' "$t" >> "$t/config/vikix/plugins/repos/settings"
+echo two >> "$t/src/lib/f"; git -C "$t/src/lib" commit -qam two
+printf 'LIB_COMMIT=%s # pinned\n' "$(git -C "$t/src/lib" rev-parse HEAD)" > "$t/src/app/bin/app-lib"
+git -C "$t/src/app" add bin; git -C "$t/src/app" commit -qm "pin lib"
+echo three >> "$t/src/lib/f"; git -C "$t/src/lib" commit -qam three
+"$here/bin/repos" > "$t/list"
+ok grep -qE "^lib .* push 2, 1 past app's pin" "$t/list"
+# The app alone: its pin isn't on the remote yet, so it's refused.
+"$here/bin/repos" push app > "$t/out" 2>&1 && { echo "FAIL: pushing a pin the remote hasn't got should fail"; fail=1; }
+ok grep -q "it pins lib .*, which GitHub hasn't got" "$t/out"
+ok test "$(git -C "$t/src/app" rev-list --count '@{u}..HEAD')" = 1
+# Everything: the library first, then the app.
+"$here/bin/repos" push > "$t/out" 2>&1 || { echo "FAIL: push all: $(cat "$t/out")"; fail=1; }
+ok test "$(grep -n '^== lib: pushed' "$t/out" | cut -d: -f1)" -lt "$(grep -n '^== app: pushed' "$t/out" | cut -d: -f1)"
+ok test "$(git --git-dir="$t/remotes/app.git" rev-parse main)" = "$(git -C "$t/src/app" rev-parse HEAD)"
+ok sh -c "git --git-dir=\"$t/remotes/ahead.git\" rev-parse -q --verify refs/tags/v1 >/dev/null"
+ok grep -q "not committed: f" "$t/out"
+# Pull: one behind fast-forwards; one where both moved puts ours on top.
+"$here/bin/repos" pull behind > "$t/out" 2>&1
+ok grep -q '^== behind: caught up: 1 new' "$t/out"
+ok test "$(git -C "$t/src/behind" rev-parse HEAD)" = "$(git --git-dir="$t/remotes/behind.git" rev-parse main)"
+git clone -q "$t/remotes/clean.git" "$t/other2" 2>/dev/null
+echo theirs > "$t/other2/g"; git -C "$t/other2" add g; git -C "$t/other2" commit -qm theirs; git -C "$t/other2" push -q 2>/dev/null
+echo ours > "$t/src/clean/h"; git -C "$t/src/clean" add h; git -C "$t/src/clean" commit -qm ours
+"$here/bin/repos" pull clean > "$t/out" 2>&1
+ok test "$(git -C "$t/src/clean" log --format=%s -2 | tr '\n' ' ')" = "ours theirs "
+"$here/bin/repos" pull nosuch > /dev/null 2>&1 && { echo "FAIL: an unknown project should be refused"; fail=1; }
 exit "$fail"
