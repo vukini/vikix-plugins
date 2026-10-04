@@ -62,8 +62,11 @@ focused window's, and those of windows that are gone, are cleared."
                (agent-waiting-clear (first note)))
         (message "No agent waits for you."))))
 
-;; Looking at a window is seeing its note.
-(add-hook *focus-window-hook* 'agent-waiting-clear)
+;; Looking at a window is seeing its note: a rule for every window, when
+;; it gets the focus (Vikix lists it, and takes it away with the plugin).
+(when-window () :on :focus
+  :name "agent-waiting: looking at a window is seeing its note"
+  (agent-waiting-clear (window)))
 
 (vikix-plugin-bar "agent-waiting" 'agent-waiting-bar :click "agent-waiting-go")
 (vikix-plugin-key "s-M-w" "agent-waiting-go" "Go to the agent waiting for you" "Agents")

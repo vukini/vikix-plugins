@@ -3,7 +3,8 @@
 # known kinds, named as its folder; the files it names are there (scripts
 # executable); its Lisp reads (sbcl, with StumpWM's packages made up, since
 # this runs without StumpWM); its shell passes shellcheck; its own test
-# passes; its commands' headers are in the shape Vikix makes their man pages
+# passes; its Lisp adds no hook of its own (rules do that work, and go with
+# the plugin); its commands' headers are in the shape Vikix makes their man pages
 # from (checked where a Vikix checkout is at hand: its lib/man.py).
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -54,6 +55,12 @@ for dir in */; do
     for k in $(grep -oE '\(vikix-plugin-key +"[^"]+"' "$p/$lisp" | grep -oE '"[^"]+"' | tr -d '"'); do
       [[ $k =~ ^s-M-([A-Za-z0-9]|F[0-9]{1,2})$ ]] || bad "$p" "its key $k isn't on Super+Alt (s-M- and a letter, digit or F-key)"
     done
+  fi
+  # Nothing of a plugin's hangs on StumpWM's hooks by itself: a rule
+  # (when-window ...) does what a window hook did, is listed by vikix
+  # rules, and goes when the plugin does. A hook would stay behind.
+  if [ -n "$lisp" ] && [ -f "$p/$lisp" ] && grep -n '(add-hook' "$p/$lisp"; then
+    bad "$p" "its Lisp adds a hook of its own (above): write a rule, (when-window (MATCH...) VERB...), which Vikix takes away with the plugin"
   fi
   # The Lisp reads: every form, in a package like StumpWM's.
   lisp=$(field "$p" lisp)

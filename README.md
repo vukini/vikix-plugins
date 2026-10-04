@@ -37,6 +37,8 @@ agent-waiting/
   setup, remove      run once by add and remove, after showing you what they do
 ```
 
+What a plugin wants of windows it says as a rule, in its `plugin.lisp`: `(when-window (:title "Note to inbox") :name "inbox: the note's box floats" (float :width 760 :height 360))`, or `(when-window () :on :focus ...)` for every window that gets the focus. It never adds a hook to StumpWM by itself (`tests/check.sh` refuses an `add-hook`): a rule is listed by `vikix rules`, can be switched off there, keeps Vikix's guards, and goes when the plugin is removed, where a hook would stay until the next login.
+
 A program in `bin/` starts with a header, a comment under its `#!` line (or a Python docstring): `NAME — one line`, then its forms indented, each two spaces or more from what it does, then prose. Its `-h` prints that, and Vikix makes the program's man page from it (`man inbox`), so the two never differ. A program that only starts `lib/NAME.py` may leave the forms to that file's docstring. `tests/check.sh` says when a header is out of shape.
 
 The `manifest` is lines of `key: value`:

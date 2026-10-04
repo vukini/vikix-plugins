@@ -1,7 +1,7 @@
 name: agent-waiting
 about: The bar says when a Claude Code session in another window waits for you; Super+Alt+w goes there
 kinds: bar key menu
-vikix: 0.71.41
+vikix: 0.71.102
 lisp: plugin.lisp
 setup: setup
 remove: remove

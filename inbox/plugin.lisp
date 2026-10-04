@@ -14,26 +14,14 @@
 
 (defparameter *inbox-frame-title* "Note to inbox")
 
-(defun inbox-float-box (win)
-  ;; Emacs can't be told apart by class (every frame is "Emacs"), but a
-  ;; frame given a name keeps it as its title.
-  (when (and (equal (window-title win) *inbox-frame-title*)
-             (not (typep win 'float-window)))
-    (let ((head (window-head win)))
-      (float-window win (window-group win))
-      ;; Tiled first, it got a Vikix title bar, which floating leaves over
-      ;; the box's top line.
-      (when (fboundp 'vikix-titlebar-remove)
-        (funcall 'vikix-titlebar-remove win))
-      (when head
-        (let ((w (min 760 (- (head-width head) 40)))
-              (h (min 360 (- (head-height head) 40))))
-          (float-window-move-resize
-           win :width w :height h
-           :x (+ (head-x head) (floor (- (head-width head) w) 2))
-           :y (+ (head-y head) (floor (- (head-height head) h) 3))))))))
-
-(add-hook *new-window-hook* 'inbox-float-box)
+;; The note's box floats over what you're doing, a little above the middle.
+;; Emacs can't be told apart by class (every frame is "Emacs"), but a frame
+;; given a name keeps it as its title. A rule, not a hook of the plugin's
+;; own: Vikix lists it (vikix rules), keeps the guards (the title bar a tile
+;; had, floating twice), and takes it away with the plugin.
+(when-window (:title *inbox-frame-title*)
+  :name "inbox: the note's box floats over what you're doing"
+  (float :width 760 :height 360 :y "22%"))
 
 (defcommand inbox-note () ()
   "A note into your Org inbox: write, or Super+F9 to speak."
