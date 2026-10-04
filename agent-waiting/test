@@ -1,36 +1,100 @@
 #!/bin/sh
-# agent-waiting's own test (tests/check.sh runs it): the hook command notes
-# ask, done and clear by window, an idle "waiting for your input" is done,
-# a done doesn't hide an ask, and outside a terminal window it does
-# nothing; setup adds the three hooks once, keeping what was there, and
-# remove takes only them out.
+# agent-waiting's own test (tests/check.sh runs it). The hook command: a
+# permission dialog is noted at once with the tool and what it's for, a
+# question with its words; the notification that follows seconds later
+# doesn't write the note again, an idle one neither; a finished turn is
+# "reply" with the line when it ends on a question or leaves a step that
+# starts "You:", else "done" with its first line, and takes the place of
+# an "ask"; one that stops with work in the background leaves no note
+# unless it asks; each note has the folder; the desktop is told each time
+# (a made-up vikix here); outside a terminal window nothing happens. setup
+# adds the five hooks once, keeping what was there, and remove takes only
+# them out.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 export HOME="$t" XDG_STATE_HOME="$t/state"
 unset WINDOWID
+# A vikix of the test's own: what the desktop is told lands in a file.
+mkdir -p "$t/bin"
+printf '#!/bin/sh\necho "$*" >> "%s/told"\n' "$t" > "$t/bin/vikix"
+chmod +x "$t/bin/vikix"
+PATH="$t/bin:$PATH"; export PATH
 fail=0
 ok() { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
-aw() { echo "${2:-{\}}" | ALACRITTY_WINDOW_ID=${3:-42} "$here/bin/agent-waiting" "$1"; }
-note() { cut -d' ' -f1 "$t/state/vikix/agents/${1:-42}" 2>/dev/null; }
+aw() { printf '%s' "${2:-{\}}" | ALACRITTY_WINDOW_ID=${3:-42} "$here/bin/agent-waiting" "$1"; }
+state() { sed -n 1p "$t/state/vikix/agents/${1:-42}" 2>/dev/null | cut -d' ' -f1; }
+stamp() { sed -n 1p "$t/state/vikix/agents/${1:-42}" 2>/dev/null | cut -d' ' -f2; }
+folder() { sed -n 2p "$t/state/vikix/agents/${1:-42}" 2>/dev/null; }
+line() { sed -n 3p "$t/state/vikix/agents/${1:-42}" 2>/dev/null; }
 
-aw ask '{"message": "Claude needs your permission to use Bash"}'
-ok test "$(note)" = ask
-aw "done"
-ok test "$(note)" = ask                 # a done doesn't hide an ask
+# A permission dialog: at once, with the tool and what it is for.
+aw permission '{"cwd": "/home/me/src/esploro", "tool_name": "Bash", "tool_input": {"command": "make install", "description": "Install the build"}}'
+ok test "$(state)" = ask
+ok test "$(folder)" = esploro
+ok test "$(line)" = "Bash: Install the build"
+# The notification seconds later says less: the note stays as it is.
+aw ask '{"message": "Claude needs your permission to use Bash", "notification_type": "permission_prompt"}'
+ok test "$(line)" = "Bash: Install the build"
+# The turn's end takes the place of an ask, and its first line is kept.
+aw "done" '{"cwd": "/home/me/src/esploro", "last_assistant_message": "## Installed\n\nThe build is **installed** in `~/.local`.\n\nNothing is left to do."}'
+ok test "$(state)" = "done"
+ok test "$(line)" = "Installed"
+# An idle "waiting for your input", a minute later, changes nothing.
+before=$(cat "$t/state/vikix/agents/42")
+aw ask '{"message": "Claude is waiting for your input", "notification_type": "idle_prompt"}'
+ok test "$(cat "$t/state/vikix/agents/42")" = "$before"
 aw clear
 ok test ! -e "$t/state/vikix/agents/42"
-aw ask '{"message": "Claude is waiting for your input"}' 43
-ok test "$(note 43)" = "done"             # idle is done, not asking
-echo '{}' | env -u ALACRITTY_WINDOW_ID "$here/bin/agent-waiting" ask
-ok test "$(ls "$t/state/vikix/agents" | wc -l)" = 1   # no terminal window: nothing
+
+# It ends on a question: reply, with the question.
+aw "done" '{"cwd": "/x/vikix", "last_assistant_message": "The tests pass.\n\n```sh\nls?\n```\n\nShall I **merge** it now?"}'
+ok test "$(state)" = reply
+ok test "$(line)" = "Shall I merge it now?"
+# It leaves you a step: reply, with the step.
+aw "done" '{"cwd": "/x/vikix", "last_assistant_message": "Fixed and released.\n\nLive on your desktop: NO\n- You: run `gup`.\n- Me: nothing."}' 43
+ok test "$(state 43)" = reply
+ok test "$(line 43)" = "You: run gup."
+# A word like "your" at the start of a line isn't a step for you.
+aw "done" '{"last_assistant_message": "Your tests: all passed."}' 44
+ok test "$(state 44)" = "done"
+# Work still running in the background: not done, no note; a question is one.
+aw "done" '{"last_assistant_message": "The tests are running.", "background_tasks": [{"id": "b1"}]}' 45
+ok test ! -e "$t/state/vikix/agents/45"
+aw "done" '{"last_assistant_message": "The tests are running. Which branch next?", "background_tasks": [{"id": "b1"}]}' 45
+ok test "$(state 45)" = reply
+# AskUserQuestion: its question.
+aw question '{"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Which library should we use?", "options": []}]}}' 46
+ok test "$(state 46)" = ask
+ok test "$(line 46)" = "Which library should we use?"
+# With no note yet, the notification makes one: asking, or (idle) done.
+aw ask '{"message": "Claude needs your permission to use Edit"}' 47
+ok test "$(state 47) $(line 47)" = "ask Claude needs your permission to use Edit"
+aw ask '{"message": "Claude is waiting for your input"}' 48
+ok test "$(state 48)" = "done"
+# A very long line is cut, and what isn't JSON is no reason to fail.
+aw "done" "{\"last_assistant_message\": \"$(printf 'word %.0s' $(seq 1 100))\"}" 49
+ok test "$(line 49 | wc -m)" -le 242
+aw "done" 'not json' 50
+ok test "$(state 50)" = "done"
+# Outside a terminal window: nothing.
+n=$(find "$t/state/vikix/agents" -type f | wc -l)
+echo '{}' | env -u ALACRITTY_WINDOW_ID "$here/bin/agent-waiting" permission
+ok test "$(find "$t/state/vikix/agents" -type f | wc -l)" = "$n"
+ok test -z "$(find "$t/state/vikix/agents" -name '*.new')"
+# The desktop was told, each time a note changed.
+sleep 0.5
+ok grep -qx 'eval (agent-waiting-changed)' "$t/told"
+ok test "$(wc -l < "$t/told")" -ge 10
+ok test -n "$(stamp 49)"
 
 mkdir -p "$t/.claude"
-echo '{"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}' > "$t/.claude/settings.json"
+echo '{"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}], "Notification": [{"hooks": [{"type": "command", "command": "'"$t"'/.local/bin/agent-waiting ask"}]}]}}' > "$t/.claude/settings.json"
 "$here/setup" >/dev/null; "$here/setup" >/dev/null
-s=$(cat "$t/.claude/settings.json")
-ok test "$(printf '%s' "$s" | grep -c 'agent-waiting')" = 3
+ok test "$(grep -c 'agent-waiting' "$t/.claude/settings.json")" = 5     # the one that was there isn't added again
+ok grep -q '"matcher": "AskUserQuestion"' "$t/.claude/settings.json"
+ok grep -q 'agent-waiting permission' "$t/.claude/settings.json"
 ok grep -q '"mine"' "$t/.claude/settings.json"
 ok grep -q '"theme": "dark"' "$t/.claude/settings.json"
 "$here/remove" >/dev/null

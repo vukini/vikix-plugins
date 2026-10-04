@@ -1,37 +1,163 @@
-#!/bin/sh
-# agent-waiting — what Claude Code's hooks call (the plugin's setup adds
-# them): it notes, by its terminal window, that the session there asks
-# something (a permission, a question) or has finished, or neither.
-#
-#   agent-waiting ask     Notification: Claude wants you (an idle "waiting
-#                         for your input" counts as done, not as asking)
-#   agent-waiting done    Stop: it finished, and waits for your next word
-#   agent-waiting clear   UserPromptSubmit: you answered
-#
-# One file a window in ~/.local/state/vikix/agents/, named by the X window
-# id the terminal gives its programs; StumpWM's side (plugin.lisp) reads
-# them for the bar and clears one when you look at its window. Quick and
-# quiet: a hook that is slow or prints holds Claude up.
+#!/usr/bin/env python3
+"""agent-waiting — what Claude Code's hooks call: notes which session waits for you, and what for.
 
-state="${XDG_STATE_HOME:-$HOME/.local/state}/vikix/agents"
-win=${ALACRITTY_WINDOW_ID:-${WINDOWID:-}}
-case $win in ''|*[!0-9]*) cat >/dev/null 2>&1; exit 0 ;; esac   # not in a terminal window: nothing to point at
-what=${1:-}
-input=$(cat 2>/dev/null)
+  agent-waiting permission   PermissionRequest: a permission dialog has opened
+  agent-waiting question     PreToolUse of AskUserQuestion: it asks you to choose
+  agent-waiting ask          Notification: Claude wants you (seconds after the
+                             dialog; an idle "waiting for your input" isn't asking)
+  agent-waiting done         Stop: it finished its turn
+  agent-waiting clear        UserPromptSubmit: you answered
 
-case $what in
-  ask)
-    case $input in *"waiting for your input"*) what="done" ;; esac ;;
-  done|clear) ;;
-  *) exit 0 ;;
-esac
-mkdir -p "$state" 2>/dev/null || exit 0
-if [ "$what" = clear ]; then
-  rm -f "$state/$win"
-else
-  # Asking stays asking until answered: a later "done" from the same
-  # turn doesn't hide it.
-  if [ "$what" = "done" ] && [ "$(cut -d' ' -f1 "$state/$win" 2>/dev/null)" = ask ]; then exit 0; fi
-  printf '%s %s\n' "$what" "$(date +%s)" > "$state/$win.new" && mv -f "$state/$win.new" "$state/$win"
-fi
-exit 0
+The plugin's setup adds the hooks. One file a terminal window in
+~/.local/state/vikix/agents/, named by the X window id the terminal gives
+its programs. Its first line is the state and the time: "ask" (a dialog
+is open and the work stands still), "reply" (it finished, and its last
+words ask something of you: a question, or a line that starts "You:") or
+"done" (it finished). The second is the folder the session works in, the
+third a line of what it said or wants. A session that stops with work
+still running in the background isn't done, and leaves no note unless it
+asks something.
+
+StumpWM's side (plugin.lisp) reads the notes for the bar and clears one
+when you look at its window; it is told at once that a note changed
+(vikix eval), so the bar doesn't wait for its next redraw. Quick and
+quiet: a hook that is slow or prints holds Claude up.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+                     "vikix", "agents")
+LONGEST = 240   # of the line of what it said
+
+
+def plain(line):
+    """A line of Markdown as plain words."""
+    line = re.sub(r"^\s*(#+|[-*+>]|\d+[.)])\s+", "", line)
+    line = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", line)
+    line = re.sub(r"[*_`]+", "", line)
+    return " ".join(line.split())
+
+
+def said(message):
+    """(STATE, LINE) for a finished turn's last message: "reply" with the
+    question or the step that is yours, else "done" with its first line."""
+    text = re.sub(r"```.*?(```|\Z)", "", message or "", flags=re.S)
+    lines = [p for p in (plain(line) for line in text.splitlines()) if p]
+    if not lines:
+        return "done", ""
+    for line in reversed(lines[-3:]):          # it ends on a question
+        if line.rstrip(" )\"'”").endswith("?"):
+            return "reply", line
+    for line in lines[-12:]:                   # or leaves you a step: "You: run gup"
+        if re.match(r"you\b[^:]{0,24}:", line, flags=re.I):
+            return "reply", line
+    return "done", lines[0]
+
+
+def wanted(data):
+    """A line for the permission a dialog asks: the tool, and what with."""
+    tool = data.get("tool_name") or "a tool"
+    given = data.get("tool_input") or {}
+    if not isinstance(given, dict):
+        given = {}
+    what = given.get("description") or given.get("command") or given.get("file_path") or given.get("url") or ""
+    return f"{tool}: {plain(str(what))}" if what else f"wants to use {tool}"
+
+
+def asked(data):
+    """The question an AskUserQuestion puts."""
+    given = data.get("tool_input") or {}
+    questions = given.get("questions") if isinstance(given, dict) else None
+    if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+        return plain(str(questions[0].get("question") or "")) or "asks you to choose"
+    return "asks you to choose"
+
+
+def tell_desktop():
+    """Say a note changed, without waiting for the answer."""
+    vikix = shutil.which("vikix")
+    if not vikix:
+        return
+    try:
+        subprocess.Popen([vikix, "eval", "(agent-waiting-changed)"], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+def main():
+    what = sys.argv[1] if len(sys.argv) > 1 else ""
+    if what in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    try:
+        raw = sys.stdin.read()
+    except (OSError, ValueError):
+        raw = ""
+    win = os.environ.get("ALACRITTY_WINDOW_ID") or os.environ.get("WINDOWID") or ""
+    if not win.isdigit():          # not in a terminal window: nothing to point at
+        return
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    note = os.path.join(STATE, win)
+    try:
+        with open(note, encoding="utf-8") as f:
+            now = f.readline().split(" ")[0].strip()
+    except OSError:
+        now = ""
+
+    if what == "clear":
+        try:
+            os.remove(note)
+        except OSError:
+            return
+        tell_desktop()
+        return
+    if what == "permission":
+        state, line = "ask", wanted(data)
+    elif what == "question":
+        state, line = "ask", asked(data)
+    elif what == "ask":
+        message = str(data.get("message") or "")
+        idle = data.get("notification_type") == "idle_prompt" or "waiting for your input" in message
+        # It comes seconds after the dialog (a minute after the end of a
+        # turn, idle): a note that's there already says it better.
+        if now:
+            return
+        state, line = ("done", "") if idle else ("ask", plain(message))
+    elif what == "done":
+        state, line = said(str(data.get("last_assistant_message") or ""))
+        if state == "done" and data.get("background_tasks"):
+            return                 # still working: it will be back by itself
+    else:
+        return
+
+    folder = os.path.basename(str(data.get("cwd") or os.getcwd()).rstrip("/"))
+    if len(line) > LONGEST:
+        line = line[:LONGEST - 1].rstrip() + "…"
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(note + ".new", "w", encoding="utf-8") as f:
+            f.write(f"{state} {int(time.time())}\n{folder}\n{line}\n")
+        os.replace(note + ".new", note)
+    except OSError:
+        return
+    tell_desktop()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:              # a hook never fails Claude
+        pass
+    sys.exit(0)

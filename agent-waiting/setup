@@ -1,7 +1,8 @@
 #!/bin/sh
 # setup — add the hooks that tell agent-waiting what Claude Code is doing,
 # to your ~/.claude/settings.json (a copy of it is kept first, beside it).
-# Safe to run twice: a hook that's there already isn't added again.
+# Safe to run twice: a hook that's there already isn't added again (so
+# running it again after an update adds only the hooks that are new).
 set -eu
 settings="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
@@ -15,15 +16,23 @@ try:
 except FileNotFoundError:
     settings = {}
 hooks = settings.setdefault("hooks", {})
-for event, what in (("Notification", "ask"), ("Stop", "done"), ("UserPromptSubmit", "clear")):
+# The event, what agent-waiting is told, and the one tool it is for (or none).
+for event, what, tool in (("PermissionRequest", "permission", None),
+                          ("PreToolUse", "question", "AskUserQuestion"),
+                          ("Notification", "ask", None),
+                          ("Stop", "done", None),
+                          ("UserPromptSubmit", "clear", None)):
     groups = hooks.setdefault(event, [])
     line = f"{command} {what}"
     if not any(h.get("command") == line for g in groups for h in g.get("hooks", [])):
-        groups.append({"hooks": [{"type": "command", "command": line}]})
+        group = {"hooks": [{"type": "command", "command": line}]}
+        if tool:
+            group["matcher"] = tool
+        groups.append(group)
 tmp = path + ".vikix-new"
 with open(tmp, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
 os.replace(tmp, path)
 PY
-echo "   added Claude Code's hooks for agent-waiting: new sessions use them; in a session already running, type /hooks (or restart it)"
+echo "   Claude Code's hooks for agent-waiting are in its settings: new sessions use them; a session already running may need /hooks (or starting again)"
