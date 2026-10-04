@@ -1,3 +1,6 @@
 #!/bin/sh
-# notes-sync: your notes up to Dropbox (inbox sync).
+# notes-sync — your notes up to Dropbox: inbox sync, by a name of its own.
+#
+#   notes-sync [--notify]   what inbox sync does; --notify says how it went
+#                           in a notification too
 exec inbox sync "$@"

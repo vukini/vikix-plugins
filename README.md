@@ -37,6 +37,8 @@ agent-waiting/
   setup, remove      run once by add and remove, after showing you what they do
 ```
 
+A program in `bin/` starts with a header, a comment under its `#!` line (or a Python docstring): `NAME — one line`, then its forms indented, each two spaces or more from what it does, then prose. Its `-h` prints that, and Vikix makes the program's man page from it (`man inbox`), so the two never differ. A program that only starts `lib/NAME.py` may leave the forms to that file's docstring. `tests/check.sh` says when a header is out of shape.
+
 The `manifest` is lines of `key: value`:
 
 | Key | |

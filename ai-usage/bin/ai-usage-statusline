@@ -6,6 +6,9 @@
 # notes them in ~/.local/state/vikix/ai-usage for the bar, then prints the
 # line Claude Code shows under its prompt: your own status line's, when
 # you had one (setup kept it), or a short one of its own.
+#
+#   ai-usage-statusline   read what Claude Code hands it on stdin (JSON),
+#                         print the status line; it takes no arguments
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/vikix/ai-usage"
 own="${XDG_CONFIG_HOME:-$HOME/.config}/vikix/plugins/ai-usage/your-statusline"

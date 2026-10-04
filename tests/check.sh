@@ -3,10 +3,18 @@
 # known kinds, named as its folder; the files it names are there (scripts
 # executable); its Lisp reads (sbcl, with StumpWM's packages made up, since
 # this runs without StumpWM); its shell passes shellcheck; its own test
-# passes.
+# passes; its commands' headers are in the shape Vikix makes their man pages
+# from (checked where a Vikix checkout is at hand: its lib/man.py).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 fail=0
+# Vikix's lib/man.py, one new enough to check a folder: VIKIX_DIR, else the
+# checkouts a dev machine and an installed one have.
+man_py=''
+for d in "${VIKIX_DIR:-}" "$HOME/src/vikix" "$HOME/vikix"; do
+  [ -n "$d" ] && grep -qs -- '--check \[BIN' "$d/lib/man.py" && { man_py="$d/lib/man.py"; break; }
+done
+[ -n "$man_py" ] || echo "(no Vikix checkout here: the commands' headers not checked)"
 bad() { echo "FAIL $1: $2"; fail=1; }
 field() { sed -n "s/^$2: *//p" "$1/manifest" | head -1; }
 
@@ -35,6 +43,11 @@ for dir in */; do
     [ -e "$f" ] || continue
     [ -x "$f" ] || bad "$p" "$f isn't executable"
   done
+  # A command starts with a header: "NAME — one line", its forms, then prose.
+  # -h prints it, and Vikix makes the command's man page from it.
+  if [ -d "$p/bin" ] && [ -n "$man_py" ]; then
+    python3 "$man_py" --check "$p/bin" || bad "$p" "a command's header isn't in the shape its man page is made from"
+  fi
   # Vikix's rule for keys: a plugin's keys are on Super+Alt (s-M-...).
   lisp=$(field "$p" lisp)
   if [ -n "$lisp" ] && [ -f "$p/$lisp" ]; then
