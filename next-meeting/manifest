@@ -1,7 +1,7 @@
 name: next-meeting
 about: Your next meeting and how long until it starts, in the bar, from your calendars' private links (Microsoft 365, Google, Todoist); Super+Alt+j joins it, Super+Alt+c lists the week
 kinds: bar key menu service
-vikix: 0.71.44
+vikix: 0.71.185
 packages: python3-icalendar python3-dateutil
 lisp: plugin.lisp
 service: next-meeting watch

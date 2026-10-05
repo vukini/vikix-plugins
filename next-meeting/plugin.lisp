@@ -61,4 +61,4 @@
 (vikix-plugin-bar "next-meeting" 'next-meeting-bar :click "next-meeting-join")
 (vikix-plugin-key "s-M-j" "next-meeting-join" "Meetings: join the one on now, or the next" "Meetings")
 (vikix-plugin-key "s-M-c" "next-meeting-week" "Meetings: the coming week; Enter joins one" "Meetings")
-(vikix-plugin-menu "Meetings: the coming week" '(next-meeting-week))
+(vikix-plugin-menu "Meetings: the coming week" '(next-meeting-week) "Work")

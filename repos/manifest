@@ -1,6 +1,6 @@
 name: repos
 about: Which git projects in ~/src need pushing, pulling or committing: git 2 in the bar; Super+Alt+g opens a terminal with the details and the commands, ready to run (Up brings them back); repos push, pull, ship and update do it in one command, pinned projects first
 kinds: bar key menu service
-vikix: 0.71.44
+vikix: 0.71.185
 lisp: plugin.lisp
 service: repos watch

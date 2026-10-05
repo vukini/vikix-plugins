@@ -29,5 +29,5 @@
 
 (vikix-plugin-bar "flights" 'flights-bar :click "flights-drops")
 (vikix-plugin-key "s-M-f" "flights-search" "Flights: search (DXB LHR 12 Nov, back 20th)" "Travel")
-(vikix-plugin-menu "Flights: search" '(flights-search))
-(vikix-plugin-menu "Flights: the watched ones that got cheaper" '(flights-drops))
+(vikix-plugin-menu "Flights: search" '(flights-search) "Work")
+(vikix-plugin-menu "Flights: the watched ones that got cheaper" '(flights-drops) "Work")

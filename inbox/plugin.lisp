@@ -46,8 +46,8 @@
 
 (vikix-plugin-key "s-M-i" "inbox-note" "Notes: a note into your inbox (Super+F9 in it to speak)" "Notes")
 (vikix-plugin-key "s-M-I" "inbox-quote" "Notes: a note into your inbox, quoting the selection" "Notes")
-(vikix-plugin-menu "Notes: a note into your inbox" '(inbox-note))
+(vikix-plugin-menu "Notes: a note into your inbox" '(inbox-note) "Work")
 (vikix-plugin-key "s-M-S" "inbox-sort" "Notes: sort the inbox into your Org files, to-dos to Todoist" "Notes")
-(vikix-plugin-menu "Notes: sort the inbox" '(inbox-sort))
-(vikix-plugin-menu "Notes: open the inbox" '(inbox-open))
-(vikix-plugin-menu "Notes: sync with Dropbox" '(inbox-sync))
+(vikix-plugin-menu "Notes: sort the inbox" '(inbox-sort) "Work")
+(vikix-plugin-menu "Notes: open the inbox" '(inbox-open) "Work")
+(vikix-plugin-menu "Notes: sync with Dropbox" '(inbox-sync) "Work")

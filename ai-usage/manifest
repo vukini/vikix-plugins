@@ -1,7 +1,7 @@
 name: ai-usage
 about: How much of your Claude plan you've used (the 5-hour window and the week) in the bar, and when it resets; Super+Alt+u says more
 kinds: bar key menu
-vikix: 0.71.44
+vikix: 0.71.185
 lisp: plugin.lisp
 setup: setup
 remove: remove

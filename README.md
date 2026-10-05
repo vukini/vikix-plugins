@@ -62,8 +62,10 @@ The `manifest` is lines of `key: value`:
 ```lisp
 (vikix-plugin-bar "agent-waiting" 'my-function)   ; a few words in the bar, from the function (nil: nothing)
 (vikix-plugin-key "s-M-w" "my-command" "What it does" "agent-waiting")   ; a key, in the key card
-(vikix-plugin-menu "Agents: go to the waiting one" '(my-command))        ; an entry in Super+m
+(vikix-plugin-menu "Agents: go to the waiting one" '(my-command) "AI")   ; an entry in Super+m, in its section AI
 ```
+
+Super+m is in sections (Start, Help, Vikix, AI, Work, Notifications, Desktop, Windows, System, Apps), and the third word says which one the entry is in: an agent's or a model's in AI, what you'd use while working in Work. A name of the plugin's own (`"Sailing"`) makes a section; with none the entry is in one called Plugins. Start the label with what it is about and a colon (`Notes: sort the inbox`): the lines with the same beginning stay together in the section, a plugin's beside Vikix's own. The menu shows the entry's key by itself, when a key of the plugin runs the same command.
 
 A plugin's keys are on Super+Alt (`s-M-w`; `s-M-W`, with Shift, for a second on the same letter): Vikix keeps one rule for keys, where Super+Alt opens everything beyond the six main apps, and `tests/check.sh` fails on a plugin key anywhere else.
 

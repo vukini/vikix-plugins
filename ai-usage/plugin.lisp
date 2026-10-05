@@ -69,4 +69,4 @@
 
 (vikix-plugin-bar "ai-usage" 'ai-usage-bar :click "ai-usage")
 (vikix-plugin-key "s-M-u" "ai-usage" "Claude plan: how much is used, when it resets" "AI & voice")
-(vikix-plugin-menu "Claude plan: how much is used" '(ai-usage))
+(vikix-plugin-menu "Claude plan: how much is used" '(ai-usage) "AI")

@@ -178,4 +178,4 @@ asking ones first, the oldest first."
 
 (vikix-plugin-bar "agent-waiting" 'agent-waiting-bar :click "agent-waiting-go")
 (vikix-plugin-key "s-M-w" "agent-waiting-go" "Go to the agent waiting for you, or pick among several" "Agents")
-(vikix-plugin-menu "Agents: go to the one waiting for you" '(agent-waiting-go))
+(vikix-plugin-menu "Agents: go to the one waiting for you" '(agent-waiting-go) "AI")

@@ -39,5 +39,5 @@ them back), and a shell ready."
 
 (vikix-plugin-bar "repos" 'repos-bar :click "repos-term")
 (vikix-plugin-key "s-M-g" "repos-term" "Projects: what to push, pull or commit, in a terminal ready for it" "Projects")
-(vikix-plugin-menu "Projects: what to push, pull or commit (a terminal)" '(repos-term))
-(vikix-plugin-menu "Projects: pick one to push, pull or open in Magit" '(repos-pick))
+(vikix-plugin-menu "Projects: what to push, pull or commit (a terminal)" '(repos-term) "Work")
+(vikix-plugin-menu "Projects: pick one to push, pull or open in Magit" '(repos-pick) "Work")

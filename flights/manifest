@@ -1,7 +1,7 @@
 name: flights
 about: Search flights from a line ("DXB LHR 12 Nov, back 20th"), cheapest and quickest in a list, opened on Google Flights to book there; watch routes for a cheaper price; Super+Alt+f
 kinds: bar key menu service
-vikix: 0.71.44
+vikix: 0.71.185
 lisp: plugin.lisp
 setup: setup
 remove: remove
