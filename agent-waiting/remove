@@ -1,6 +1,7 @@
 #!/bin/sh
-# remove — take agent-waiting's hooks out of ~/.claude/settings.json again
-# (a copy is kept first), and its notes.
+# remove — take agent-waiting's hooks out of ~/.claude/settings.json and
+# its notify setting out of ~/.codex/config.toml again (a copy of each is
+# kept first), and its notes.
 set -eu
 settings="$HOME/.claude/settings.json"
 if [ -e "$settings" ]; then
@@ -29,6 +30,30 @@ with open(tmp, "w") as f:
     f.write("\n")
 os.replace(tmp, path)
 PY
+fi
+config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+if [ -e "$config" ] && grep -q 'agent-waiting' "$config"; then
+  cp -p "$config" "$config.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$config" <<'PY'
+import os, re, sys
+path = sys.argv[1]
+with open(path) as f:
+    lines = f.read().splitlines(True)
+kept, taken = [], False
+for l in lines:
+    if l.startswith("# agent-waiting (a Vikix plugin)") or (re.match(r"\s*notify\s*=", l) and "agent-waiting" in l):
+        taken = True
+    elif taken and l.strip() == "" and (not kept or kept[-1].strip() == ""):
+        taken = False               # the blank line setup put before the first table
+    else:
+        kept.append(l)
+        taken = False
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    f.writelines(kept)
+os.replace(tmp, path)
+PY
+  echo "   took agent-waiting's notify setting out of Codex's config.toml"
 fi
 rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/vikix/agents"
 echo "   took agent-waiting's hooks out of Claude Code's settings"

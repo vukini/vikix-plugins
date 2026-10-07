@@ -7,6 +7,8 @@
                              dialog; an idle "waiting for your input" isn't asking)
   agent-waiting done         Stop: it finished its turn
   agent-waiting clear        UserPromptSubmit: you answered
+  agent-waiting codex        Codex's notify setting: a turn ended (and, as Codex
+                             documents it, an approval or a question waits)
 
 The plugin's setup adds the hooks. One file a terminal window in
 ~/.local/state/vikix/agents/, named by the X window id the terminal gives
@@ -17,6 +19,13 @@ words ask something of you: a question, or a line that starts "You:") or
 third a line of what it said or wants. A session that stops with work
 still running in the background isn't done, and leaves no note unless it
 asks something.
+
+Codex has no hooks of ours: its notify setting (the plugin's setup puts it
+in ~/.codex/config.toml) runs this with "codex" and a JSON whose "type" is
+agent-turn-complete, with the last message under hyphenated keys, or, by
+its documentation, approval-requested or async-question; while it waits,
+its window's title says so, and plugin.lisp reads that by itself. Nothing
+of Codex's says you answered: a look at the window clears its note.
 
 StumpWM's side (plugin.lisp) reads the notes for the bar and clears one
 when you look at its window; it is told at once that a note changed
@@ -139,6 +148,16 @@ def main():
         state, line = said(str(data.get("last_assistant_message") or ""))
         if state == "done" and data.get("background_tasks"):
             return                 # still working: it will be back by itself
+    elif what == "codex":
+        kind = str(data.get("type") or "")
+        if kind == "agent-turn-complete":
+            state, line = said(str(data.get("last-assistant-message") or ""))
+        elif kind in ("approval-requested", "async-question"):
+            state = "ask"
+            line = (plain(str(data.get("message") or data.get("question") or ""))
+                    or ("wants your yes" if kind == "approval-requested" else "asks you to choose"))
+        else:
+            return
     else:
         return
 

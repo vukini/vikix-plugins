@@ -1,8 +1,8 @@
 name: agent-waiting
-about: The bar names the Claude Code session that waits for you in another window, and says whether it asks something; a notification says what; Super+Alt+w goes there
+about: The bar names the Claude Code or Codex session that waits for you in another window, and says whether it asks something; a notification says what; Super+Alt+w goes there
 kinds: bar key menu
 vikix: 0.71.185
 lisp: plugin.lisp
 setup: setup
 remove: remove
-changes: adds five hooks to ~/.claude/settings.json (PermissionRequest, PreToolUse for AskUserQuestion, Notification, Stop, UserPromptSubmit), each running agent-waiting; remove takes them out again
+changes: adds five hooks to ~/.claude/settings.json (PermissionRequest, PreToolUse for AskUserQuestion, Notification, Stop, UserPromptSubmit), each running agent-waiting, and, where ~/.codex is there, a notify setting to ~/.codex/config.toml (one of your own is left alone); remove takes them out again

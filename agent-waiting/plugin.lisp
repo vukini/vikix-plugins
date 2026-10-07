@@ -13,6 +13,12 @@
 ;;;; its note. A note whose window has closed is dropped. The hook tells
 ;;;; StumpWM when a note changes (agent-waiting-changed), so none of this
 ;;;; waits for the bar's next redraw.
+;;;;
+;;;; Codex has no hook of ours. Its window's title is its note: Codex
+;;;; writes "[ ! ] Action Required | THREAD | FOLDER" while an approval or a
+;;;; question waits (agent-waiting-title-note, read here the way the hook's
+;;;; files are, with the time it was first seen), and its notify setting
+;;;; (the plugin's setup adds it) runs the hook command when a turn ends.
 
 (in-package :stumpwm)
 
@@ -43,6 +49,42 @@ set in user.lisp: (setf *agent-waiting-notify* :all).")
                (or folder "")
                (or line "")))))))
 
+(defparameter *agent-waiting-codex-marks* '("[ ! ] Action Required" "[ . ] Action Required")
+  "What Codex writes at the front of its window's title while an approval
+or a question of its waits for you (its terminal title's first item; the
+two are its blink).")
+
+(defvar *agent-waiting-seen* (make-hash-table :test 'eql)
+  "Each window id whose title asks, and when that was first seen: the
+title says that Codex waits, not since when.")
+
+(defun agent-waiting-codex-title (title)
+  "TITLE's parts: (values ASKING THREAD FOLDER). Codex writes MARK | THREAD
+| FOLDER, the mark only while it waits for you; any other title is its own
+THREAD, with no folder."
+  (let* ((mark (find-if (lambda (m) (eql 0 (search m title))) *agent-waiting-codex-marks*))
+         (rest (string-left-trim " |" (if mark (subseq title (length mark)) title)))
+         (parts (remove "" (mapcar (lambda (p) (string-trim " " p)) (split-string rest "|"))
+                        :test #'string=)))
+    (values (and mark t) (or (first parts) "") (or (second parts) ""))))
+
+(defun agent-waiting-title-note (window)
+  "The note WINDOW's title is, or nil: Codex's says that it waits for you
+and no hook of ours hears of it. (STATE TIME FOLDER LINE), the time that
+of the first look that saw it."
+  (let ((id (xlib:window-id (window-xwin window))))
+    (multiple-value-bind (asking thread folder)
+        (agent-waiting-codex-title (or (ignore-errors (window-title window)) ""))
+      (declare (ignore thread))
+      (cond (asking
+             (list "ask"
+                   (or (gethash id *agent-waiting-seen*)
+                       (setf (gethash id *agent-waiting-seen*)
+                             (- (get-universal-time) 2208988800)))   ; its time counts from 1970, as the files'
+                   folder
+                   "an approval or a question is open (Codex)"))
+            (t (remhash id *agent-waiting-seen*) nil)))))
+
 (defun agent-waiting-asks-p (note)
   "True when NOTE's session wants something of you (a dialog, or its last words)."
   (and (member (second note) '("ask" "reply") :test #'string=) t))
@@ -50,18 +92,24 @@ set in user.lisp: (setf *agent-waiting-notify* :all).")
 (defun agent-waiting-notes ()
   "The notes, as (WINDOW STATE TIME FOLDER LINE): those with a dialog open
 first, then those whose last words ask something, then the finished, the
-oldest first in each. The focused window's, and those of windows that are gone, are cleared."
-  (let ((notes '()))
+oldest first in each. The focused window's, and those of windows that are gone, are cleared.
+A window whose title asks (Codex's) is noted by it, over any file of its."
+  (let ((notes '()) (noted '()))
     (dolist (file (ignore-errors (directory (merge-pathnames "*" *agent-waiting-dir*))))
       (let* ((id (and (null (pathname-type file))    ; not a note being written (.new)
                       (ignore-errors (parse-integer (pathname-name file)))))
              (window (and id (agent-waiting-window id)))
-             (note (and window (agent-waiting-read file))))
+             (note (and window (or (agent-waiting-title-note window) (agent-waiting-read file)))))
         (cond ((null id))
               ((or (null window) (eq window (current-window)))
                (remhash id *agent-waiting-told*)
                (ignore-errors (delete-file file)))
-              (note (push (cons window note) notes)))))
+              (note (push id noted) (push (cons window note) notes)))))
+    (dolist (window (all-windows))
+      (unless (or (member (xlib:window-id (window-xwin window)) noted)
+                  (eq window (current-window)))
+        (let ((note (agent-waiting-title-note window)))
+          (when note (push (cons window note) notes)))))
     (flet ((rank (note) (or (position (second note) '("ask" "reply") :test #'string=) 2)))
       (sort notes (lambda (a b)
                     (if (= (rank a) (rank b))
@@ -75,8 +123,10 @@ oldest first in each. The focused window's, and those of windows that are gone, 
 
 (defun agent-waiting-name (note)
   "What to call NOTE's session: its window's title without Claude's mark in
-front, or, where the title names nothing, the folder it works in."
-  (let* ((title (or (ignore-errors (window-title (first note))) ""))
+front (Codex's thread, without its mark and folder), or, where the title
+names nothing, the folder it works in."
+  (let* ((title (nth-value 1 (agent-waiting-codex-title
+                              (or (ignore-errors (window-title (first note))) ""))))
          (start (position-if #'alphanumericp title))
          (title (if start (subseq title start) ""))
          (folder (fourth note)))

@@ -18,7 +18,7 @@ A guide to each one (what it does, adding it, its keys and settings, where it ke
 
 | Plugin | What it does |
 |---|---|
-| [agent-waiting](agent-waiting/) | Which Claude Code session waits for you in another window, and what for: the bar names it and its workspace (`asks: Esploro tags (3)`, quieter `done: Fix the bar (1) +2`), a notification says what it asks the moment it does, and Super+Alt+w goes there, or lists them when several wait |
+| [agent-waiting](agent-waiting/) | Which Claude Code or Codex session waits for you in another window, and what for: the bar names it and its workspace (`asks: Esploro tags (3)`, quieter `done: Fix the bar (1) +2`), a notification says what it asks the moment it does, and Super+Alt+w goes there, or lists them when several wait |
 | [ai-usage](ai-usage/) | How much of your Claude plan you've used, the 5-hour window and the week (`plan 24% 41%`), from what Claude Code gives its status line; Super+Alt+u says when each resets; a record of it every 15 minutes |
 | [next-meeting](next-meeting/) | Your next meeting in the bar (`Standup 14:30 in 12m`, `now: Standup`), from your calendars' private links (Microsoft 365, Google, Todoist), a notification 5 minutes before; Super+Alt+j joins it (Teams in the Teams web app), Super+Alt+c lists the week; each meeting joined is a record |
 | [flights](flights/) | Search flights from a line (`DXB LHR 12 Nov, back 20th`): cheapest first, the quickest marked, Enter opens the search on Google Flights to book there; watch a route and get a notification (and `flight cheaper` in the bar) when it drops; Super+Alt+f. Prices from Google Flights through fast-flights (no account; unofficial); each search and each price checked is a record; it never books |

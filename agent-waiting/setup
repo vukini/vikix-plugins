@@ -1,8 +1,11 @@
 #!/bin/sh
 # setup — add the hooks that tell agent-waiting what Claude Code is doing,
-# to your ~/.claude/settings.json (a copy of it is kept first, beside it).
-# Safe to run twice: a hook that's there already isn't added again (so
-# running it again after an update adds only the hooks that are new).
+# to your ~/.claude/settings.json (a copy of it is kept first, beside it),
+# and, where Codex is set up (~/.codex), its notify setting to
+# ~/.codex/config.toml, which runs agent-waiting when a turn ends. Safe to
+# run twice: a hook that's there already isn't added again (so running it
+# again after an update adds only the hooks that are new), and a notify
+# setting of your own is left as it is, and said.
 set -eu
 settings="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
@@ -36,3 +39,38 @@ with open(tmp, "w") as f:
 os.replace(tmp, path)
 PY
 echo "   Claude Code's hooks for agent-waiting are in its settings: new sessions use them; a session already running may need /hooks (or starting again)"
+
+codex="${CODEX_HOME:-$HOME/.codex}"
+if [ -d "$codex" ]; then
+  config="$codex/config.toml"
+  [ -e "$config" ] && cp -p "$config" "$config.vikix-bak.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$config" "$HOME/.local/bin/agent-waiting" <<'PY'
+import json, os, re, sys
+path, command = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        lines = f.read().splitlines(True)
+except FileNotFoundError:
+    lines = []
+if any("agent-waiting" in l for l in lines if re.match(r"\s*notify\s*=", l)):
+    sys.exit(0)
+if any(re.match(r"\s*notify\s*=", l) for l in lines):
+    print("   Codex's config.toml has a notify setting of its own: left as it is (agent-waiting would be"
+          f" notify = [{json.dumps(command)}, \"codex\"])")
+    sys.exit(0)
+# A key of the top level goes before the first table ([tui], ...).
+at = next((i for i, l in enumerate(lines) if re.match(r"\s*\[", l)), len(lines))
+if lines and not lines[-1].endswith("\n"):
+    lines[-1] += "\n"
+new = ["# agent-waiting (a Vikix plugin): tells the bar when a turn ends\n",
+       f"notify = [{json.dumps(command)}, \"codex\"]\n"]
+if at < len(lines):
+    new.append("\n")
+lines[at:at] = new
+tmp = path + ".vikix-new"
+with open(tmp, "w") as f:
+    f.writelines(lines)
+os.replace(tmp, path)
+print("   Codex's notify setting runs agent-waiting when a turn ends: new sessions use it")
+PY
+fi

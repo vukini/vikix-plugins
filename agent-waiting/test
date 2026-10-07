@@ -7,9 +7,11 @@
 # starts "You:", else "done" with its first line, and takes the place of
 # an "ask"; one that stops with work in the background leaves no note
 # unless it asks; each note has the folder; the desktop is told each time
-# (a made-up vikix here); outside a terminal window nothing happens. setup
-# adds the five hooks once, keeping what was there, and remove takes only
-# them out.
+# (a made-up vikix here); outside a terminal window nothing happens. Codex's
+# notify payload: a turn's end is done or reply as Claude's is, an approval
+# or a question asks, anything else is nothing. setup adds the five hooks
+# once, keeping what was there, and Codex's notify setting before its first
+# table, once, never over one of your own; remove takes only them out.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d)
@@ -78,6 +80,18 @@ aw "done" "{\"last_assistant_message\": \"$(printf 'word %.0s' $(seq 1 100))\"}"
 ok test "$(line 49 | wc -m)" -le 242
 aw "done" 'not json' 50
 ok test "$(state 50)" = "done"
+# Codex's notify: a turn's end, with its hyphenated keys; an approval; a
+# question; a kind it doesn't know.
+aw codex '{"type": "agent-turn-complete", "cwd": "/x/office", "thread-id": "t1", "last-assistant-message": "The build is **done**.\n\nShall I push it?"}' 51
+ok test "$(state 51) $(folder 51) $(line 51)" = "reply office Shall I push it?"
+aw codex '{"type": "agent-turn-complete", "last-assistant-message": "Built."}' 51
+ok test "$(state 51) $(line 51)" = "done Built."
+aw codex '{"type": "approval-requested", "cwd": "/x/office"}' 52
+ok test "$(state 52) $(line 52)" = "ask wants your yes"
+aw codex '{"type": "async-question", "message": "Which **branch**?"}' 53
+ok test "$(state 53) $(line 53)" = "ask Which branch?"
+aw codex '{"type": "something-else"}' 54
+ok test ! -e "$t/state/vikix/agents/54"
 # Outside a terminal window: nothing.
 n=$(find "$t/state/vikix/agents" -type f | wc -l)
 echo '{}' | env -u ALACRITTY_WINDOW_ID "$here/bin/agent-waiting" permission
@@ -101,4 +115,25 @@ ok grep -q '"theme": "dark"' "$t/.claude/settings.json"
 ok test "$(grep -c 'agent-waiting' "$t/.claude/settings.json")" = 0
 ok grep -q '"mine"' "$t/.claude/settings.json"
 ok test ! -e "$t/state/vikix/agents"
+
+# Codex: the notify setting goes before the first table, once; what was
+# there stays; remove takes it out; one of your own is left; no ~/.codex,
+# nothing made.
+mkdir -p "$t/.codex"
+printf 'model = "m"\n\n[tui]\nnotifications = true\n' > "$t/.codex/config.toml"
+"$here/setup" >/dev/null; "$here/setup" >/dev/null
+ok test "$(grep -c '^notify = ' "$t/.codex/config.toml")" = 1
+ok test "$(python3 -c "import tomllib,sys;c=tomllib.load(open(sys.argv[1],'rb'));print(c['notify'][1], c['model'], c['tui']['notifications'])" "$t/.codex/config.toml")" = "codex m True"
+ok grep -q "agent-waiting\", \"codex\"" "$t/.codex/config.toml"
+"$here/remove" >/dev/null
+ok test "$(grep -c 'agent-waiting' "$t/.codex/config.toml")" = 0
+ok test "$(cat "$t/.codex/config.toml")" = "$(printf 'model = "m"\n\n[tui]\nnotifications = true')"
+printf 'notify = ["mine"]\n' > "$t/.codex/config.toml"
+case $("$here/setup") in *"notify setting of its own"*) ;; *) echo "FAIL: setup says a notify of your own is left"; fail=1 ;; esac
+ok test "$(cat "$t/.codex/config.toml")" = 'notify = ["mine"]'
+"$here/remove" >/dev/null
+ok test "$(cat "$t/.codex/config.toml")" = 'notify = ["mine"]'
+rm -rf "$t/.codex"
+"$here/setup" >/dev/null
+ok test ! -e "$t/.codex"
 exit "$fail"
